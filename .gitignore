@@ -2,6 +2,12 @@
 /node_modules
 /.pnp
 .pnp.js
+package-lock.json
+
+# Runtime files
+nohup.out
+app.log
+*.log
 
 # Production
 /dist

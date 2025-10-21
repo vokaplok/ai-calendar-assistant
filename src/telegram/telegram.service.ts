@@ -70,15 +70,22 @@ export class TelegramService implements OnModuleInit {
     this.bot.on('text', async (ctx) => {
       try {
         const userMessage = ctx.message.text;
+        const userId = ctx.from?.id?.toString() || 'default';
         
         // Skip command messages
         if (userMessage.startsWith('/')) {
           return;
         }
 
-        await ctx.reply('🔍 Processing your request...');
-        
-        const userId = ctx.from?.id?.toString() || 'default';
+        // Handle confirmation responses (yes/no)
+        const confirmationResult = await this.handleConfirmationResponse(userMessage, userId, ctx);
+        if (confirmationResult) {
+          return;
+        }
+
+        // Show initial status message based on message content
+        const statusMessage = this.getStatusMessage(userMessage);
+        const statusMsg = await ctx.reply(statusMessage);
         
         // Extract and store memories from the user message
         const extractedMemories = await this.memoryService.extractAndStoreMemories(userMessage, userId);
@@ -93,14 +100,29 @@ export class TelegramService implements OnModuleInit {
         const plan = await this.llmService.planAndExecuteWithContext(userMessage, conversationContext);
         
         if (plan.functionCalls.length === 0) {
-          await ctx.reply('❌ I couldn\'t understand your request. Try asking about your schedule, creating events, or finding free time.');
+          await ctx.telegram.editMessageText(ctx.chat!.id, statusMsg.message_id, undefined, 
+            '❌ I couldn\'t understand your request. Try asking about your schedule, creating events, or finding free time.');
           return;
         }
 
-        // Execute all function calls
+        // Check if any functions require confirmation
+        const needsConfirmation = this.checkIfNeedsConfirmation(plan.functionCalls);
+        
+        if (needsConfirmation) {
+          const confirmationResponse = await this.handleConfirmationFlow(userMessage, plan, conversationContext, ctx, statusMsg.message_id);
+          return;
+        }
+
+        // Execute all function calls without confirmation
         const functionResults = [];
         
-        for (const functionCall of plan.functionCalls) {
+        for (let i = 0; i < plan.functionCalls.length; i++) {
+          const functionCall = plan.functionCalls[i];
+          
+          // Update status for each function execution
+          await ctx.telegram.editMessageText(ctx.chat!.id, statusMsg.message_id, undefined, 
+            `${this.getFunctionStatusEmoji(functionCall.name)} ${this.getFunctionStatusText(functionCall.name)} (${i + 1}/${plan.functionCalls.length})...`);
+          
           try {
             const result = await this.orchestratorService.executeFunction(functionCall);
             functionResults.push({
@@ -120,7 +142,8 @@ export class TelegramService implements OnModuleInit {
         // Generate natural language response with memory context
         const response = await this.llmService.generateResponseWithContext(userMessage, functionResults, conversationContext);
         
-        await ctx.reply(response);
+        // Replace the processing message with the final response
+        await ctx.telegram.editMessageText(ctx.chat!.id, statusMsg.message_id, undefined, response);
         
       } catch (error) {
         console.error('Error processing message:', error);
@@ -133,5 +156,196 @@ export class TelegramService implements OnModuleInit {
 
   getBot() {
     return this.bot;
+  }
+
+  private getStatusMessage(userMessage: string): string {
+    const lowerMessage = userMessage.toLowerCase();
+    
+    if (lowerMessage.includes('create') || lowerMessage.includes('schedule') || lowerMessage.includes('add')) {
+      return '📅 Creating calendar event...';
+    } else if (lowerMessage.includes('free') || lowerMessage.includes('available')) {
+      return '🔍 Searching for available time slots...';
+    } else if (lowerMessage.includes('delete') || lowerMessage.includes('remove')) {
+      return '🗑️ Searching for events to delete...';
+    } else if (lowerMessage.includes('plan') || lowerMessage.includes('schedule')) {
+      return '📊 Analyzing your schedule...';
+    } else if (/^\d+$/.test(userMessage.trim()) || lowerMessage.includes('book') && /\d+/.test(userMessage)) {
+      return '📋 Processing your selection...';
+    } else if (lowerMessage.includes('when') || lowerMessage.includes('what')) {
+      return '🔎 Checking your calendar...';
+    } else {
+      return '🤖 Understanding your request...';
+    }
+  }
+
+  private getFunctionStatusEmoji(functionName: string): string {
+    const emojiMap: { [key: string]: string } = {
+      'create_event': '📅',
+      'find_free_slots': '🔍',
+      'delete_events': '🗑️',
+      'list_events': '📋',
+      'check_availability': '⏰',
+      'analyze_schedule': '📊',
+      'store_memory': '🧠',
+      'search_memory': '💭',
+      'select_from_list': '📌',
+      'check_conflicts': '⚠️'
+    };
+    return emojiMap[functionName] || '⚙️';
+  }
+
+  private getFunctionStatusText(functionName: string): string {
+    const textMap: { [key: string]: string } = {
+      'create_event': 'Creating calendar event',
+      'find_free_slots': 'Finding available time slots',
+      'delete_events': 'Deleting matching events',
+      'list_events': 'Retrieving your schedule',
+      'check_availability': 'Checking calendar availability',
+      'analyze_schedule': 'Analyzing schedule patterns',
+      'store_memory': 'Storing information',
+      'search_memory': 'Searching memories',
+      'select_from_list': 'Processing selection',
+      'check_conflicts': 'Checking for conflicts'
+    };
+    return textMap[functionName] || 'Processing function';
+  }
+
+  private checkIfNeedsConfirmation(functionCalls: any[]): boolean {
+    // Functions that always need confirmation
+    const confirmationRequired = ['create_event', 'delete_events', 'select_from_list', 'reschedule_events'];
+    
+    return functionCalls.some(call => confirmationRequired.includes(call.name));
+  }
+
+  private async handleConfirmationFlow(
+    userMessage: string, 
+    plan: any, 
+    conversationContext: any, 
+    ctx: any, 
+    messageId: number
+  ): Promise<void> {
+    const userId = ctx.from?.id?.toString() || 'default';
+    
+    // Generate preview of what will be done
+    const preview = await this.generateActionPreview(plan.functionCalls);
+    
+    await ctx.telegram.editMessageText(ctx.chat!.id, messageId, undefined, 
+      `${preview}\n\n🤔 Shall I proceed with this action?\n\nReply "yes" to confirm or "no" to cancel.`);
+    
+    // Store pending action in memory for confirmation handling
+    await this.memoryService.storeMemory({
+      content: `Pending confirmation: ${JSON.stringify(plan.functionCalls)}`,
+      type: 'conversation_context' as any,
+      importance: 9,
+      tags: ['pending_confirmation', 'awaiting_response'],
+      context: {
+        originalMessage: userMessage,
+        functionCalls: plan.functionCalls,
+        conversationContext,
+        messageId,
+        chatId: ctx.chat!.id
+      },
+      expiresAt: new Date(Date.now() + 10 * 60 * 1000) // 10 minute timeout
+    }, userId);
+  }
+
+  private async generateActionPreview(functionCalls: any[]): Promise<string> {
+    let preview = '📋 **Action Preview:**\n\n';
+    
+    functionCalls.forEach((call, index) => {
+      switch (call.name) {
+        case 'create_event':
+          const start = new Date(call.arguments.start_time).toLocaleString('en-US', {timeZone: 'Asia/Jerusalem'});
+          const end = new Date(call.arguments.end_time).toLocaleString('en-US', {timeZone: 'Asia/Jerusalem'});
+          preview += `${index + 1}. 📅 Create "${call.arguments.title}"\n   ⏰ ${start} - ${end}\n`;
+          if (call.arguments.location) preview += `   📍 ${call.arguments.location}\n`;
+          preview += '\n';
+          break;
+          
+        case 'delete_events':
+          preview += `${index + 1}. 🗑️ Delete events containing: "${call.arguments.search_query}"\n\n`;
+          break;
+          
+        case 'select_from_list':
+          preview += `${index + 1}. 📌 Book option #${call.arguments.selection_number} from recent list\n\n`;
+          break;
+          
+        default:
+          preview += `${index + 1}. ${this.getFunctionStatusEmoji(call.name)} ${this.getFunctionStatusText(call.name)}\n\n`;
+      }
+    });
+    
+    return preview;
+  }
+
+  private async handleConfirmationResponse(userMessage: string, userId: string, ctx: any): Promise<boolean> {
+    const lowerMessage = userMessage.toLowerCase().trim();
+    
+    // Check if this is a yes/no response
+    if (!['yes', 'y', 'no', 'n', 'confirm', 'cancel'].includes(lowerMessage)) {
+      return false;
+    }
+
+    // Search for pending confirmation in memory
+    const pendingSearchResult = await this.memoryService.searchMemories({
+      query: 'pending_confirmation',
+      type: 'conversation_context' as any,
+      maxResults: 1
+    }, userId);
+
+    if (pendingSearchResult.entries.length === 0) {
+      await ctx.reply('❌ No pending action found to confirm.');
+      return true;
+    }
+
+    const pendingAction = pendingSearchResult.entries[0];
+    const functionCalls = pendingAction.context.functionCalls;
+
+    if (lowerMessage === 'yes' || lowerMessage === 'y' || lowerMessage === 'confirm') {
+      // Execute the pending actions
+      await ctx.reply('✅ Confirmed! Executing actions...');
+      
+      const functionResults = [];
+      
+      for (let i = 0; i < functionCalls.length; i++) {
+        const functionCall = functionCalls[i];
+        
+        try {
+          const result = await this.orchestratorService.executeFunction(functionCall);
+          functionResults.push({
+            function: functionCall.name,
+            ...result
+          });
+        } catch (error) {
+          console.error(`Error executing ${functionCall.name}:`, error);
+          functionResults.push({
+            function: functionCall.name,
+            success: false,
+            error: error.message
+          });
+        }
+      }
+
+      // Generate response based on execution results
+      const response = await this.llmService.generateResponseWithContext(
+        pendingAction.context.originalMessage, 
+        functionResults, 
+        pendingAction.context.conversationContext
+      );
+      
+      await ctx.reply(response);
+      
+      // Remove the pending action from memory
+      await this.memoryService.removeMemory(pendingAction.id);
+      
+    } else {
+      // User canceled
+      await ctx.reply('❌ Action canceled. How else can I help you?');
+      
+      // Remove the pending action from memory
+      await this.memoryService.removeMemory(pendingAction.id);
+    }
+
+    return true;
   }
 }
