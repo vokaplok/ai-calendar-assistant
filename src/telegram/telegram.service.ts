@@ -57,14 +57,48 @@ export class TelegramService implements OnModuleInit {
       ctx.reply(
         '📝 Available commands:\n\n' +
         '/start - Get started\n' +
-        '/help - Show this help message\n\n' +
+        '/help - Show this help message\n' +
+        '/auth - Authorize Google Calendar access\n' +
+        '/status - Check calendar connection status\n\n' +
         '💬 Text commands:\n' +
         'Just type natural language like:\n' +
         '• "create event for 7pm called Tennis"\n' +
         '• "schedule meeting tomorrow at 3pm"\n' +
-        '• "add dentist appointment Friday 2pm"\n\n' +
+        '• "add dentist appointment Friday 2pm"\n' +
+        '• "book 2 meetings tomorrow: John at 2pm and Sarah at 3pm"\n\n' +
         'The bot will parse your message and create calendar events automatically!'
       );
+    });
+
+    this.bot.command('auth', async (ctx) => {
+      try {
+        const authUrl = this.calendarService.generateAuthUrl();
+        await ctx.reply(
+          '🔐 **Google Calendar Authorization**\n\n' +
+          '📋 Click the link below to authorize calendar access:\n' +
+          `🔗 [Authorize Google Calendar](${authUrl})\n\n` +
+          '⚠️ After authorization, you can start creating events!\n\n' +
+          '💡 This is a one-time setup - your tokens will be saved securely.',
+          { parse_mode: 'Markdown' }
+        );
+      } catch (error) {
+        console.error('Error generating auth URL:', error);
+        await ctx.reply('❌ Error generating authorization link. Please try again.');
+      }
+    });
+
+    this.bot.command('status', async (ctx) => {
+      try {
+        const isAuthenticated = await this.calendarService.checkAuthentication();
+        const authMessage = isAuthenticated 
+          ? '✅ **Google Calendar Connected**\n\nYou can create events! Try:\n• "create event for 7pm called Tennis"\n• "book 2 meetings tomorrow: John at 2pm and Sarah at 3pm"'
+          : '❌ **Not Authenticated**\n\nUse /auth to connect your Google Calendar first.';
+        
+        await ctx.reply(authMessage, { parse_mode: 'Markdown' });
+      } catch (error) {
+        console.error('Error checking authentication:', error);
+        await ctx.reply('❌ Error checking authentication status.');
+      }
     });
 
     this.bot.on('text', async (ctx) => {

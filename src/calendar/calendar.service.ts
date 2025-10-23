@@ -65,6 +65,17 @@ export class CalendarService {
     this.oauth2Client.setCredentials(tokens);
   }
 
+  async checkAuthentication(): Promise<boolean> {
+    try {
+      // Try to list calendars to verify authentication
+      await this.calendar.calendarList.list({ maxResults: 1 });
+      return true;
+    } catch (error) {
+      console.log('Authentication check failed:', error.message);
+      return false;
+    }
+  }
+
   private async loadSavedTokens() {
     try {
       const tokensData = await fs.readFile(this.tokensFilePath, 'utf-8');
