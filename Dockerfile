@@ -1,17 +1,19 @@
-# Use Node.js 18 Alpine for smaller image size
-FROM node:18-alpine
+# Use Node.js 18 for better compatibility  
+FROM node:18-slim
 
-# Install curl for health checks
-RUN apk add --no-cache curl
+# Install necessary packages
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
 WORKDIR /app
 
 # Copy package files
-COPY package*.json ./
+COPY package.json ./
+COPY package-lock.json* ./
 
-# Install all dependencies (including devDependencies for build)
-RUN npm ci
+# Clear cache and install dependencies with fallback
+RUN npm cache clean --force && \
+    (npm ci || npm install)
 
 # Copy source code
 COPY . .
@@ -19,8 +21,8 @@ COPY . .
 # Build the application
 RUN npm run build
 
-# Remove devDependencies to reduce image size
-RUN npm prune --production
+# Remove devDependencies to reduce size
+RUN npm prune --production || true
 
 # Expose the port the app runs on
 EXPOSE 3002

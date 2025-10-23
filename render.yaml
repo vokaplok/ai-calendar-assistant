@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: ai-calendar-assistant
+    env: node
+    region: oregon
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm run start:prod
+    healthCheckPath: /telegram/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3002
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_WEBHOOK_SECRET
+        sync: false
+      - key: GOOGLE_OAUTH_CLIENT_ID
+        sync: false
+      - key: GOOGLE_OAUTH_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_OAUTH_REDIRECT_URL
+        value: https://your-app-name.onrender.com/oauth/google/callback
+      - key: DEFAULT_TIMEZONE
+        value: Asia/Jerusalem
+      - key: GOOGLE_CALENDAR_DEFAULT_ID
+        value: primary
