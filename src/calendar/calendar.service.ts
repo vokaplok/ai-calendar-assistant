@@ -2,11 +2,14 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { google } from 'googleapis';
 import { ParsedEvent } from '../common/types';
+import * as fs from 'fs/promises';
+import * as path from 'path';
 
 @Injectable()
 export class CalendarService {
   private calendar;
   private oauth2Client;
+  private tokensFilePath = path.join(process.cwd(), 'data', 'google-tokens.json');
 
   constructor(private configService: ConfigService) {
     this.oauth2Client = new google.auth.OAuth2(
@@ -16,6 +19,9 @@ export class CalendarService {
     );
 
     this.calendar = google.calendar({ version: 'v3', auth: this.oauth2Client });
+    
+    // Load saved tokens on startup
+    this.loadSavedTokens();
   }
 
   generateAuthUrl(): string {
@@ -44,6 +50,10 @@ export class CalendarService {
       
       console.log('Tokens received successfully');
       this.oauth2Client.setCredentials(tokens);
+      
+      // Save tokens to persistent storage
+      await this.saveTokens(tokens);
+      
       return tokens;
     } catch (error) {
       console.error('Token exchange error:', error);
@@ -53,6 +63,57 @@ export class CalendarService {
 
   setTokens(tokens: any) {
     this.oauth2Client.setCredentials(tokens);
+  }
+
+  private async loadSavedTokens() {
+    try {
+      const tokensData = await fs.readFile(this.tokensFilePath, 'utf-8');
+      const tokens = JSON.parse(tokensData);
+      
+      // Check if tokens are still valid (not expired)
+      if (tokens.expiry_date && tokens.expiry_date > Date.now()) {
+        console.log('Loading saved tokens from storage');
+        this.oauth2Client.setCredentials(tokens);
+        
+        // Set up automatic token refresh
+        this.oauth2Client.on('tokens', (newTokens) => {
+          if (newTokens.refresh_token) {
+            tokens.refresh_token = newTokens.refresh_token;
+          }
+          if (newTokens.access_token) {
+            tokens.access_token = newTokens.access_token;
+          }
+          if (newTokens.expiry_date) {
+            tokens.expiry_date = newTokens.expiry_date;
+          }
+          
+          // Save updated tokens
+          this.saveTokens(tokens).catch(error => {
+            console.error('Error saving refreshed tokens:', error);
+          });
+        });
+        
+        console.log('Google Calendar tokens loaded and auto-refresh enabled');
+      } else {
+        console.log('Saved tokens are expired, will need re-authentication');
+      }
+    } catch (error) {
+      console.log('No saved tokens found, will need authentication');
+    }
+  }
+
+  private async saveTokens(tokens: any) {
+    try {
+      // Ensure data directory exists
+      const dataDir = path.dirname(this.tokensFilePath);
+      await fs.mkdir(dataDir, { recursive: true });
+      
+      // Save tokens
+      await fs.writeFile(this.tokensFilePath, JSON.stringify(tokens, null, 2));
+      console.log('Tokens saved to persistent storage');
+    } catch (error) {
+      console.error('Error saving tokens:', error);
+    }
   }
 
   async createEvent(parsedEvent: ParsedEvent): Promise<any> {

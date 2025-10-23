@@ -1,0 +1,62 @@
+version: '3.8'
+
+services:
+  aical:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ai-calendar-assistant
+    ports:
+      - "3002:3002"
+    environment:
+      - NODE_ENV=production
+      - PORT=3002
+    env_file:
+      - .env
+    restart: unless-stopped
+    volumes:
+      # Create logs directory if it doesn't exist
+      - ./logs:/app/logs
+      # Create data directory for any persistent storage
+      - ./data:/app/data
+      # Optional: Mount source for development (comment out for production)
+      # - ./src:/app/src
+    networks:
+      - aical-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3002/telegram/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    depends_on:
+      - setup
+    labels:
+      - "com.docker.compose.service=ai-calendar-assistant"
+      - "com.docker.compose.version=${COMPOSE_VERSION:-latest}"
+
+  # Setup service to create necessary directories
+  setup:
+    image: alpine:latest
+    container_name: aical-setup
+    volumes:
+      - ./logs:/setup/logs
+      - ./data:/setup/data
+    command: >
+      sh -c "
+        mkdir -p /setup/logs /setup/data &&
+        chmod 755 /setup/logs /setup/data &&
+        echo 'Setup completed'
+      "
+    restart: "no"
+
+networks:
+  aical-network:
+    driver: bridge
+    name: aical-network
+
+volumes:
+  aical-logs:
+    driver: local
+  aical-data:
+    driver: local

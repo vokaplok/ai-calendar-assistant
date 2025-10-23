@@ -99,6 +99,10 @@ export class TelegramService implements OnModuleInit {
         // Use LLM function calling to plan and execute with memory context
         const plan = await this.llmService.planAndExecuteWithContext(userMessage, conversationContext);
         
+        // Debug logging
+        console.log('Generated function calls:', JSON.stringify(plan.functionCalls, null, 2));
+        console.log('Number of function calls:', plan.functionCalls.length);
+        
         if (plan.functionCalls.length === 0) {
           await ctx.telegram.editMessageText(ctx.chat!.id, statusMsg.message_id, undefined, 
             '❌ I couldn\'t understand your request. Try asking about your schedule, creating events, or finding free time.');
@@ -147,9 +151,17 @@ export class TelegramService implements OnModuleInit {
         
       } catch (error) {
         console.error('Error processing message:', error);
-        await ctx.reply(
-          '❌ Sorry, something went wrong. Please try again or contact support.'
-        );
+        
+        // Show detailed error to user for debugging
+        const errorMessage = error?.message || 'Unknown error';
+        const userErrorMessage = `❌ Error: ${errorMessage}\n\n` +
+          `🔧 Debug info:\n` +
+          `• Time: ${new Date().toISOString()}\n` +
+          `• Your message: "${ctx.message?.text || 'Unknown'}"\n` +
+          `• Error type: ${error?.constructor?.name || 'Unknown'}\n\n` +
+          `Please check the logs or try again.`;
+        
+        await ctx.reply(userErrorMessage);
       }
     });
   }

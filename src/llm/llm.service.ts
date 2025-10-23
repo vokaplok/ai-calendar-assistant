@@ -79,8 +79,9 @@ Rules:
 
 Examples:
 - "create event for 7pm called Tennis" → event from 19:00 to 20:00 today
-- "meeting tomorrow at 3pm with John" → event from 15:00 to 16:00 tomorrow, notes: "with John"
+- "meeting tomorrow at 3pm with John" → event from 15:00 to 16:00 tomorrow, notes: "with John"  
 - "lunch at 12:30" → event from 12:30 to 13:30 today
+- "book 2 meetings tomorrow: John at 2pm and Sarah at 3pm" → two separate events: "Meeting with John" 14:00-15:00 tomorrow, "Meeting with Sarah" 15:00-16:00 tomorrow
 
 Return JSON in this exact format:
 {
@@ -98,7 +99,7 @@ Return JSON in this exact format:
 }`;
 
       const completion = await this.openai.chat.completions.create({
-        model: 'gpt-3.5-turbo',
+        model: 'gpt-4-turbo-preview',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userMessage },
@@ -206,7 +207,7 @@ Return JSON in this format:
 }`;
 
       const completion = await this.openai.chat.completions.create({
-        model: 'gpt-3.5-turbo',
+        model: 'gpt-4-turbo-preview',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userMessage },
@@ -302,17 +303,22 @@ Guidelines:
 - Always call functions in logical order
 - Use ISO format for dates/times
 - Be thorough in your analysis
+- For multiple events in one request, create separate create_event calls for each event
+- MANDATORY: Each create_event function call creates only ONE event. If user wants multiple events, make multiple function calls.
 
 Examples:
 - "Plan my day" → list_events for today, then analyze_schedule
 - "Delete everything with Jane" → list_events for broader period, then delete_events with "Jane"  
 - "When can I meet with John for 2 hours?" → list_events, then find_free_slots with duration=120
 - "Am I free at 2pm tomorrow?" → check_availability for specific time
+- "book 2 meetings tomorrow: John at 2pm and Sarah at 3pm" → Create two separate create_event calls, one for John at 2pm and one for Sarah at 3pm
+
+CRITICAL: When multiple events are requested, you MUST make multiple create_event function calls - one for each event. Do not try to create multiple events in a single function call.
 
 You MUST call the appropriate functions to fulfill the user's request. Don't just explain what you would do - actually call the functions.`;
 
       const completion = await this.openai.chat.completions.create({
-        model: 'gpt-3.5-turbo',
+        model: 'gpt-4-turbo-preview',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userQuery }
@@ -326,6 +332,7 @@ You MUST call the appropriate functions to fulfill the user's request. Don't jus
           }
         })),
         tool_choice: 'auto',
+        parallel_tool_calls: true,
         temperature: 0.1
       });
 
@@ -383,7 +390,7 @@ ${resultsContext}
 Provide a comprehensive response based on the results.`;
 
       const completion = await this.openai.chat.completions.create({
-        model: 'gpt-3.5-turbo',
+        model: 'gpt-4-turbo-preview',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: 'Please provide a response based on the function results.' }
@@ -466,6 +473,7 @@ Provide a comprehensive response based on the results.`;
     };
   }
 
+
   private fallbackResponse(userQuery: string, functionResults: any[]): string {
     if (functionResults.length === 0) {
       return "I couldn't process your request. Please try again.";
@@ -487,6 +495,7 @@ Provide a comprehensive response based on the results.`;
 
     return response;
   }
+
 
   async planAndExecuteWithContext(userQuery: string, context: ConversationContext): Promise<{ functionCalls: FunctionCall[]; reasoning: string }> {
     try {
@@ -528,6 +537,8 @@ Guidelines:
 - Use memory functions to store new important information
 - Search memory when relevant information might exist
 - Always call functions to fulfill requests - don't just explain
+- For multiple events in one request, create separate create_event calls for each event
+- MANDATORY: Each create_event function call creates only ONE event. If user wants multiple events, make multiple function calls.
 
 Examples:
 - "I prefer morning meetings" → Use store_memory to remember this preference
@@ -535,16 +546,60 @@ Examples:
 - "Plan my day" → Consider stored preferences when suggesting optimal schedule
 - "My lunch is always 12-1pm" → Store as recurring pattern and use for future scheduling
 - "book 1" or "1" or "book slot 1" → Use select_from_list with selection_number=1, list_type="time_slots", action="book"
+- "book 2 meetings tomorrow: John at 2pm and Sarah at 3pm" → Create two separate create_event calls, one for John at 2pm and one for Sarah at 3pm
 
-IMPORTANT: If user responds with just a number (like "1", "2", "3") or "book 1", "book slot 2", etc. - they are selecting from a recently shown numbered list. Use select_from_list function.
+🚨 CRITICAL: MULTIPLE tool_calls IN SINGLE RESPONSE 🚨
+
+For multiple meetings, you MUST emit multiple tool_calls in the SAME response message.
+
+REQUIRED RESPONSE FORMAT for "book 2 meetings tomorrow: John at 2pm and Sarah at 3pm":
+{
+  "role": "assistant",
+  "content": null,
+  "tool_calls": [
+    {
+      "id": "call_1",
+      "type": "function", 
+      "function": {
+        "name": "create_event",
+        "arguments": "{\"title\": \"Meeting with John\", \"start_time\": \"2025-10-25T14:00:00\", \"end_time\": \"2025-10-25T15:00:00\"}"
+      }
+    },
+    {
+      "id": "call_2", 
+      "type": "function",
+      "function": {
+        "name": "create_event", 
+        "arguments": "{\"title\": \"Meeting with Sarah\", \"start_time\": \"2025-10-25T15:00:00\", \"end_time\": \"2025-10-25T16:00:00\"}"
+      }
+    }
+  ]
+}
+
+Each meeting = one tool_call in the tool_calls array.
+Multiple meetings = multiple tool_calls in the SAME response.
+DO NOT make separate responses - put all tool_calls in ONE response!
+
+OTHER RULES:
+- If user responds with just a number (like "1", "2", "3") or "book 1", "book slot 2", etc. - they are selecting from a recently shown numbered list. Use select_from_list function.
 
 You MUST call the appropriate functions to fulfill the user's request.`;
 
+      // Debug: Log what we're sending to OpenAI
+      console.log('🔍 SENDING TO LLM:');
+      console.log('Model: gpt-4');
+      console.log('User query:', userQuery);
+      console.log('System prompt preview:', systemPrompt.slice(-500)); // Last 500 chars
+      console.log('Tools available:', CALENDAR_FUNCTIONS.length);
+      console.log('Parallel tool calls: true');
+      console.log('Tool choice: required');
+
       const completion = await this.openai.chat.completions.create({
-        model: 'gpt-3.5-turbo',
+        model: 'gpt-4-turbo-preview',
         messages: [
           { role: 'system', content: systemPrompt },
-          { role: 'user', content: userQuery }
+          { role: 'user', content: userQuery },
+          { role: 'assistant', content: 'I need to count how many separate events/people are mentioned and make that many create_event function calls in parallel.' }
         ],
         tools: CALENDAR_FUNCTIONS.map(func => ({
           type: 'function' as const,
@@ -554,9 +609,16 @@ You MUST call the appropriate functions to fulfill the user's request.`;
             parameters: func.parameters
           }
         })),
-        tool_choice: 'auto',
-        temperature: 0.1
+        tool_choice: 'required',
+        parallel_tool_calls: true,
+        temperature: 0.0,
+        max_tokens: 4000
       });
+
+      // Debug: Log the exact response from OpenAI
+      console.log('🔍 LLM RESPONSE:');
+      console.log('Response message:', JSON.stringify(completion.choices[0]?.message, null, 2));
+      console.log('Tool calls count:', completion.choices[0]?.message?.tool_calls?.length || 0);
 
       const message = completion.choices[0]?.message;
       if (!message) {
@@ -581,6 +643,9 @@ You MUST call the appropriate functions to fulfill the user's request.`;
         }
       }
 
+      console.log(`🔍 VERIFICATION: Expected events vs actual function calls`);
+      console.log('Function calls generated:', functionCalls.length);
+
       return {
         functionCalls,
         reasoning: message.content || 'Processing your request with context...'
@@ -596,9 +661,17 @@ You MUST call the appropriate functions to fulfill the user's request.`;
 
   async generateResponseWithContext(userQuery: string, functionResults: any[], context: ConversationContext): Promise<string> {
     try {
-      const resultsContext = functionResults.map(result => 
-        `Function: ${result.function}\nResult: ${JSON.stringify(result.data, null, 2)}`
-      ).join('\n\n');
+      // Check for errors in function results and format them clearly
+      const errors = functionResults.filter(result => !result.success);
+      const successful = functionResults.filter(result => result.success);
+      
+      const resultsContext = functionResults.map(result => {
+        if (result.success) {
+          return `Function: ${result.function}\nResult: ${JSON.stringify(result.data, null, 2)}`;
+        } else {
+          return `Function: ${result.function}\nERROR: ${result.error || 'Unknown error'}`;
+        }
+      }).join('\n\n');
 
       const memoryContext = context.relevantMemories.length > 0 
         ? `\nUser's relevant memories:\n${context.relevantMemories.map(m => `- ${m.content}`).join('\n')}`
@@ -616,16 +689,25 @@ ${memoryContext}
 FRESH FUNCTION RESULTS (use these for current data):
 ${resultsContext}
 
+${errors.length > 0 ? `
+ERRORS ENCOUNTERED: ${errors.length} function(s) failed
+- Explain any errors clearly to the user
+- Suggest what they can try to fix the issues
+- Be helpful and not technical
+` : ''}
+
 Guidelines:
 - If function results contain time slots, show ONLY those fresh results
 - If function results contain events, show ONLY those fresh results  
 - Use stored memories for context and preferences, not current data
 - When showing numbered lists, make it clear users can respond with just the number
+- If there are errors, explain them clearly and suggest solutions
+- Always be helpful and provide actionable advice
 
 Provide a comprehensive, personalized response based on the FRESH function results.`;
 
       const completion = await this.openai.chat.completions.create({
-        model: 'gpt-3.5-turbo',
+        model: 'gpt-4-turbo-preview',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: 'Please provide a response based on the function results and context.' }

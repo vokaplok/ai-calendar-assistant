@@ -55,7 +55,7 @@ export const CALENDAR_FUNCTIONS: FunctionSchema[] = [
   },
   {
     name: "create_event", 
-    description: "Create a new calendar event",
+    description: "Create a single calendar event. For multiple events, call this function multiple times - once per event.",
     parameters: {
       type: "object",
       properties: {

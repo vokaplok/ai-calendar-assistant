@@ -1,0 +1,58 @@
+version: '3.8'
+
+services:
+  aical-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: ai-calendar-assistant-dev
+    ports:
+      - "3002:3002"
+      - "9229:9229"  # Debug port
+    environment:
+      - NODE_ENV=development
+      - PORT=3002
+    env_file:
+      - .env
+    volumes:
+      # Mount source code for hot reload during development
+      - ./src:/app/src
+      - ./logs:/app/logs
+      - ./data:/app/data
+      # Mount node_modules as a volume for better performance
+      - node_modules:/app/node_modules
+    networks:
+      - aical-network
+    command: npm run start:debug
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3002/telegram/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    depends_on:
+      - setup
+
+  # Setup service remains the same
+  setup:
+    image: alpine:latest
+    container_name: aical-setup-dev
+    volumes:
+      - ./logs:/setup/logs
+      - ./data:/setup/data
+    command: >
+      sh -c "
+        mkdir -p /setup/logs /setup/data &&
+        chmod 755 /setup/logs /setup/data &&
+        echo 'Development setup completed'
+      "
+    restart: "no"
+
+networks:
+  aical-network:
+    driver: bridge
+    name: aical-dev-network
+
+volumes:
+  node_modules:
