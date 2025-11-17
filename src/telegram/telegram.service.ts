@@ -77,61 +77,72 @@ export class TelegramService implements OnModuleInit {
       try {
         const authUrl = this.calendarService.generateAuthUrl();
         await ctx.reply(
-          '🔐 **Google Calendar Authorization**\n\n' +
-          '📋 Click the link below to authorize calendar access:\n' +
-          `🔗 [Authorize Google Calendar](${authUrl})\n\n` +
-          '⚠️ After authorization, you can start creating events!\n\n' +
-          '💡 This is a one-time setup - your tokens will be saved securely.',
-          { parse_mode: 'Markdown' }
+          '🔐 **Підключення Google Calendar**\n\n' +
+          '📋 Натисніть на посилання нижче щоб надати доступ до календаря:\n\n' +
+          `${authUrl}\n\n` +
+          '✅ **Що далі:**\n' +
+          '1. Натисніть на посилання вище\n' +
+          '2. Виберіть ваш Google акаунт\n' +
+          '3. Надайте дозвіл на доступ до календаря\n' +
+          '4. Поверніться сюди і спробуйте створити подію!\n\n' +
+          '💡 Це одноразова настройка - ваші токени будуть збережені.\n\n' +
+          '🔒 Ваші дані в безпеці та використовуються тільки для роботи з календарем.',
+          { parse_mode: 'Markdown', disable_web_page_preview: true }
         );
+        console.log(`📧 Auth URL sent to user ${ctx.from?.id}`);
       } catch (error) {
-        console.error('Error generating auth URL:', error);
-        await ctx.reply('❌ Error generating authorization link. Please try again.');
+        console.error('❌ Error generating auth URL:', error);
+        await ctx.reply('❌ Помилка при генерації посилання авторизації. Спробуйте ще раз.');
       }
     });
 
     this.bot.command('status', async (ctx) => {
       try {
+        console.log(`📊 Status check requested by user ${ctx.from?.id}`);
         const authResult = await this.calendarService.checkAuthentication();
         const lastError = this.calendarService.getLastError();
 
         let authMessage = '';
 
         if (authResult.isAuthenticated) {
-          authMessage = '✅ **Google Calendar Connected**\n\n' +
-            'Your calendar is working properly!\n\n' +
-            '💡 Try:\n' +
-            '• "create event for 7pm called Tennis"\n' +
-            '• "book 2 meetings tomorrow: John at 2pm and Sarah at 3pm"';
+          authMessage = '✅ **Google Calendar підключено**\n\n' +
+            'Ваш календар працює нормально!\n\n' +
+            '💡 Спробуйте:\n' +
+            '• "створи подію на 19:00 теніс"\n' +
+            '• "забукай 2 зустрічі на завтра: Іван о 14:00 та Марія о 15:00"';
 
           // Show warning if there was a recent error
           if (lastError && (new Date().getTime() - lastError.timestamp.getTime()) < 300000) { // Last 5 minutes
-            authMessage += `\n\n⚠️ **Recent Issue Detected:**\n${lastError.message}\n_(${lastError.timestamp.toLocaleString()})_`;
+            authMessage += `\n\n⚠️ **Виявлена недавня проблема:**\n${lastError.message}\n_(${lastError.timestamp.toLocaleString()})_`;
           }
+
+          console.log('   ✅ Calendar connected');
         } else {
-          authMessage = '❌ **Calendar Connection Issue**\n\n';
+          authMessage = '❌ **Проблема з підключенням календаря**\n\n';
 
           if (authResult.error) {
-            authMessage += `**Problem:** ${authResult.error}\n\n`;
+            authMessage += `**Проблема:** ${authResult.error}\n\n`;
           } else {
-            authMessage += '**Problem:** Not authenticated with Google Calendar\n\n';
+            authMessage += '**Проблема:** Не підключено до Google Calendar\n\n';
           }
 
-          authMessage += '**Solution:** Use /auth to connect your Google Calendar.';
+          authMessage += '**Рішення:** Використайте /auth щоб підключити календар.';
 
           // Add error type for debugging
           if (authResult.errorType) {
-            authMessage += `\n\n🔧 Error type: \`${authResult.errorType}\``;
+            authMessage += `\n\n🔧 Тип помилки: \`${authResult.errorType}\``;
           }
+
+          console.warn(`   ⚠️ Calendar not connected: ${authResult.errorType || 'unknown'}`);
         }
 
         await ctx.reply(authMessage, { parse_mode: 'Markdown' });
       } catch (error) {
-        console.error('Error checking authentication:', error);
+        console.error('❌ Error checking authentication:', error);
         await ctx.reply(
-          '❌ **Error checking authentication status**\n\n' +
-          `**Details:** ${error.message}\n\n` +
-          '🔧 Please check the logs or try /auth to re-authenticate.',
+          '❌ **Помилка перевірки статусу**\n\n' +
+          `**Деталі:** ${error.message}\n\n` +
+          '🔧 Перевірте логи або спробуйте /auth для повторного підключення.',
           { parse_mode: 'Markdown' }
         );
       }
@@ -166,10 +177,11 @@ export class TelegramService implements OnModuleInit {
         if (isCalendarOperation) {
           const authResult = await this.calendarService.checkAuthentication();
           if (!authResult.isAuthenticated) {
+            console.warn(`   ⚠️ Calendar operation blocked - not authenticated`);
             await ctx.reply(
-              '⚠️ **Calendar Connection Issue**\n\n' +
-              `${authResult.error || 'Not authenticated with Google Calendar'}\n\n` +
-              '💡 Use /auth to connect your calendar, then try again.',
+              '⚠️ **Календар не підключено**\n\n' +
+              `${authResult.error || 'Не підключено до Google Calendar'}\n\n` +
+              '💡 Використайте /auth щоб підключити календар, потім спробуйте знову.',
               { parse_mode: 'Markdown' }
             );
             return;
@@ -179,22 +191,33 @@ export class TelegramService implements OnModuleInit {
         // Show initial status message based on message content
         const statusMessage = this.getStatusMessage(userMessage);
         const statusMsg = await ctx.reply(statusMessage);
-        
+
+        console.log(`\n📨 [Telegram] New message from user ${userId}`);
+        console.log(`   Message: "${userMessage}"`);
+
         // Extract and store memories from the user message
+        console.log('🧠 Extracting memories...');
         const extractedMemories = await this.memoryService.extractAndStoreMemories(userMessage, userId);
         if (extractedMemories.length > 0) {
-          console.log(`Extracted ${extractedMemories.length} memories from user message`);
+          console.log(`   ✅ Extracted ${extractedMemories.length} memories`);
+        } else {
+          console.log('   No new memories extracted');
         }
 
         // Build conversation context with relevant memories
+        console.log('🔍 Building conversation context...');
         const conversationContext = await this.memoryService.buildConversationContext(userMessage, userId);
-        
+        console.log(`   Found ${conversationContext.relevantMemories.length} relevant memories`);
+
         // Use LLM function calling to plan and execute with memory context
+        console.log('🎯 Planning actions with LLM...');
         const plan = await this.llmService.planAndExecuteWithContext(userMessage, conversationContext);
-        
+
         // Debug logging
-        console.log('Generated function calls:', JSON.stringify(plan.functionCalls, null, 2));
-        console.log('Number of function calls:', plan.functionCalls.length);
+        console.log(`📋 Plan generated: ${plan.functionCalls.length} function call(s)`);
+        plan.functionCalls.forEach((call, i) => {
+          console.log(`   ${i + 1}. ${call.name}(${Object.keys(call.arguments).join(', ')})`);
+        });
         
         if (plan.functionCalls.length === 0) {
           await ctx.telegram.editMessageText(ctx.chat!.id, statusMsg.message_id, undefined, 
@@ -211,23 +234,27 @@ export class TelegramService implements OnModuleInit {
         }
 
         // Execute all function calls without confirmation
+        console.log(`⚙️ Executing ${plan.functionCalls.length} function(s)...`);
         const functionResults = [];
-        
+
         for (let i = 0; i < plan.functionCalls.length; i++) {
           const functionCall = plan.functionCalls[i];
-          
+
+          console.log(`   ${i + 1}/${plan.functionCalls.length} Executing: ${functionCall.name}...`);
+
           // Update status for each function execution
-          await ctx.telegram.editMessageText(ctx.chat!.id, statusMsg.message_id, undefined, 
+          await ctx.telegram.editMessageText(ctx.chat!.id, statusMsg.message_id, undefined,
             `${this.getFunctionStatusEmoji(functionCall.name)} ${this.getFunctionStatusText(functionCall.name)} (${i + 1}/${plan.functionCalls.length})...`);
-          
+
           try {
             const result = await this.orchestratorService.executeFunction(functionCall);
             functionResults.push({
               function: functionCall.name,
               ...result
             });
+            console.log(`   ✅ ${functionCall.name} completed:`, result.success ? 'success' : 'failed');
           } catch (error) {
-            console.error(`Error executing ${functionCall.name}:`, error);
+            console.error(`   ❌ Error executing ${functionCall.name}:`, error.message);
             functionResults.push({
               function: functionCall.name,
               success: false,
@@ -237,10 +264,13 @@ export class TelegramService implements OnModuleInit {
         }
 
         // Generate natural language response with memory context
+        console.log('💬 Generating final response...');
         const response = await this.llmService.generateResponseWithContext(userMessage, functionResults, conversationContext);
-        
+        console.log(`   Response ready (${response.length} chars)`);
+
         // Replace the processing message with the final response
         await ctx.telegram.editMessageText(ctx.chat!.id, statusMsg.message_id, undefined, response);
+        console.log('✅ [Telegram] Message processing completed\n');
         
       } catch (error) {
         console.error('❌ Error processing message:', error);

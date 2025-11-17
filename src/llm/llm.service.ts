@@ -586,15 +586,18 @@ OTHER RULES:
 You MUST call the appropriate functions to fulfill the user's request.`;
 
       // Debug: Log what we're sending to OpenAI
-      console.log('🔍 SENDING TO LLM:');
-      console.log('Model: gpt-4');
-      console.log('User query:', userQuery);
-      console.log('System prompt preview:', systemPrompt.slice(-500)); // Last 500 chars
-      console.log('Tools available:', CALENDAR_FUNCTIONS.length);
-      console.log('Parallel tool calls: true');
-      console.log('Tool choice: required');
+      console.log('🔍 [LLM] SENDING TO LLM:');
+      console.log('   Model: gpt-4-turbo-preview');
+      console.log('   User query:', userQuery);
+      console.log('   Tools available:', CALENDAR_FUNCTIONS.length);
+      console.log('   Parallel tool calls: true');
+      console.log('   Tool choice: required');
 
-      const completion = await this.openai.chat.completions.create({
+      console.log('   📡 Calling OpenAI API for function planning...');
+      const planStartTime = Date.now();
+
+      // Create promise with timeout
+      const completionPromise = this.openai.chat.completions.create({
         model: 'gpt-4-turbo-preview',
         messages: [
           { role: 'system', content: systemPrompt },
@@ -612,8 +615,19 @@ You MUST call the appropriate functions to fulfill the user's request.`;
         tool_choice: 'required',
         parallel_tool_calls: true,
         temperature: 0.0,
-        max_tokens: 4000
+        max_tokens: 4000,
+        timeout: 30000 // 30 second timeout
       });
+
+      // Add additional timeout wrapper
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('OpenAI API timeout after 30 seconds (planning phase)')), 30000)
+      );
+
+      const completion = await Promise.race([completionPromise, timeoutPromise]) as any;
+
+      const planDuration = Date.now() - planStartTime;
+      console.log(`   ✅ OpenAI planning completed in ${planDuration}ms`);
 
       // Debug: Log the exact response from OpenAI
       console.log('🔍 LLM RESPONSE:');
@@ -661,10 +675,19 @@ You MUST call the appropriate functions to fulfill the user's request.`;
 
   async generateResponseWithContext(userQuery: string, functionResults: any[], context: ConversationContext): Promise<string> {
     try {
+      console.log('🤖 [LLM] Generating response with context...');
+      console.log(`   Query: "${userQuery}"`);
+      console.log(`   Function results: ${functionResults.length} results`);
+
       // Check for errors in function results and format them clearly
       const errors = functionResults.filter(result => !result.success);
       const successful = functionResults.filter(result => result.success);
-      
+
+      if (errors.length > 0) {
+        console.warn(`   ⚠️ ${errors.length} function(s) failed`);
+        errors.forEach(err => console.warn(`      - ${err.function}: ${err.error}`));
+      }
+
       const resultsContext = functionResults.map(result => {
         if (result.success) {
           return `Function: ${result.function}\nResult: ${JSON.stringify(result.data, null, 2)}`;
@@ -673,7 +696,7 @@ You MUST call the appropriate functions to fulfill the user's request.`;
         }
       }).join('\n\n');
 
-      const memoryContext = context.relevantMemories.length > 0 
+      const memoryContext = context.relevantMemories.length > 0
         ? `\nUser's relevant memories:\n${context.relevantMemories.map(m => `- ${m.content}`).join('\n')}`
         : '';
 
@@ -698,7 +721,7 @@ ERRORS ENCOUNTERED: ${errors.length} function(s) failed
 
 Guidelines:
 - If function results contain time slots, show ONLY those fresh results
-- If function results contain events, show ONLY those fresh results  
+- If function results contain events, show ONLY those fresh results
 - Use stored memories for context and preferences, not current data
 - When showing numbered lists, make it clear users can respond with just the number
 - If there are errors, explain them clearly and suggest solutions
@@ -706,19 +729,45 @@ Guidelines:
 
 Provide a comprehensive, personalized response based on the FRESH function results.`;
 
-      const completion = await this.openai.chat.completions.create({
+      console.log('   📡 Calling OpenAI API...');
+      const startTime = Date.now();
+
+      // Create promise with timeout
+      const completionPromise = this.openai.chat.completions.create({
         model: 'gpt-4-turbo-preview',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: 'Please provide a response based on the function results and context.' }
         ],
-        temperature: 0.7
+        temperature: 0.7,
+        timeout: 30000 // 30 second timeout
       });
 
-      return completion.choices[0]?.message?.content || 'I processed your request successfully with your preferences in mind.';
+      // Add additional timeout wrapper
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('OpenAI API timeout after 30 seconds')), 30000)
+      );
+
+      const completion = await Promise.race([completionPromise, timeoutPromise]) as any;
+
+      const duration = Date.now() - startTime;
+      console.log(`   ✅ OpenAI responded in ${duration}ms`);
+
+      const responseText = completion.choices[0]?.message?.content;
+      if (!responseText) {
+        console.warn('   ⚠️ Empty response from OpenAI, using fallback');
+        return this.generateResponse(userQuery, functionResults);
+      }
+
+      console.log(`   📝 Response length: ${responseText.length} characters`);
+      return responseText;
 
     } catch (error) {
-      console.error('Error generating response with context:', error);
+      console.error('❌ [LLM] Error generating response with context:', error);
+      console.error('   Error type:', error?.constructor?.name);
+      console.error('   Error message:', error?.message);
+      console.error('   Falling back to simple response generation...');
+
       return this.generateResponse(userQuery, functionResults);
     }
   }
