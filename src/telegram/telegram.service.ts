@@ -29,6 +29,9 @@ export class TelegramService implements OnModuleInit {
   async onModuleInit() {
     // Launch bot asynchronously without blocking module initialization
     this.launchBotAsync();
+
+    // Start periodic health check (every 5 minutes)
+    this.startHealthCheck();
   }
   
   private async launchBotAsync() {
@@ -89,15 +92,48 @@ export class TelegramService implements OnModuleInit {
 
     this.bot.command('status', async (ctx) => {
       try {
-        const isAuthenticated = await this.calendarService.checkAuthentication();
-        const authMessage = isAuthenticated 
-          ? '✅ **Google Calendar Connected**\n\nYou can create events! Try:\n• "create event for 7pm called Tennis"\n• "book 2 meetings tomorrow: John at 2pm and Sarah at 3pm"'
-          : '❌ **Not Authenticated**\n\nUse /auth to connect your Google Calendar first.';
-        
+        const authResult = await this.calendarService.checkAuthentication();
+        const lastError = this.calendarService.getLastError();
+
+        let authMessage = '';
+
+        if (authResult.isAuthenticated) {
+          authMessage = '✅ **Google Calendar Connected**\n\n' +
+            'Your calendar is working properly!\n\n' +
+            '💡 Try:\n' +
+            '• "create event for 7pm called Tennis"\n' +
+            '• "book 2 meetings tomorrow: John at 2pm and Sarah at 3pm"';
+
+          // Show warning if there was a recent error
+          if (lastError && (new Date().getTime() - lastError.timestamp.getTime()) < 300000) { // Last 5 minutes
+            authMessage += `\n\n⚠️ **Recent Issue Detected:**\n${lastError.message}\n_(${lastError.timestamp.toLocaleString()})_`;
+          }
+        } else {
+          authMessage = '❌ **Calendar Connection Issue**\n\n';
+
+          if (authResult.error) {
+            authMessage += `**Problem:** ${authResult.error}\n\n`;
+          } else {
+            authMessage += '**Problem:** Not authenticated with Google Calendar\n\n';
+          }
+
+          authMessage += '**Solution:** Use /auth to connect your Google Calendar.';
+
+          // Add error type for debugging
+          if (authResult.errorType) {
+            authMessage += `\n\n🔧 Error type: \`${authResult.errorType}\``;
+          }
+        }
+
         await ctx.reply(authMessage, { parse_mode: 'Markdown' });
       } catch (error) {
         console.error('Error checking authentication:', error);
-        await ctx.reply('❌ Error checking authentication status.');
+        await ctx.reply(
+          '❌ **Error checking authentication status**\n\n' +
+          `**Details:** ${error.message}\n\n` +
+          '🔧 Please check the logs or try /auth to re-authenticate.',
+          { parse_mode: 'Markdown' }
+        );
       }
     });
 
@@ -105,7 +141,7 @@ export class TelegramService implements OnModuleInit {
       try {
         const userMessage = ctx.message.text;
         const userId = ctx.from?.id?.toString() || 'default';
-        
+
         // Skip command messages
         if (userMessage.startsWith('/')) {
           return;
@@ -115,6 +151,29 @@ export class TelegramService implements OnModuleInit {
         const confirmationResult = await this.handleConfirmationResponse(userMessage, userId, ctx);
         if (confirmationResult) {
           return;
+        }
+
+        // Check calendar connection status proactively for calendar operations
+        const lowerMessage = userMessage.toLowerCase();
+        const isCalendarOperation = lowerMessage.includes('create') ||
+                                    lowerMessage.includes('schedule') ||
+                                    lowerMessage.includes('add') ||
+                                    lowerMessage.includes('delete') ||
+                                    lowerMessage.includes('free') ||
+                                    lowerMessage.includes('available') ||
+                                    lowerMessage.includes('book');
+
+        if (isCalendarOperation) {
+          const authResult = await this.calendarService.checkAuthentication();
+          if (!authResult.isAuthenticated) {
+            await ctx.reply(
+              '⚠️ **Calendar Connection Issue**\n\n' +
+              `${authResult.error || 'Not authenticated with Google Calendar'}\n\n` +
+              '💡 Use /auth to connect your calendar, then try again.',
+              { parse_mode: 'Markdown' }
+            );
+            return;
+          }
         }
 
         // Show initial status message based on message content
@@ -184,18 +243,40 @@ export class TelegramService implements OnModuleInit {
         await ctx.telegram.editMessageText(ctx.chat!.id, statusMsg.message_id, undefined, response);
         
       } catch (error) {
-        console.error('Error processing message:', error);
-        
+        console.error('❌ Error processing message:', error);
+        console.error('   Stack trace:', error.stack);
+
+        // Check if this is a calendar-related error
+        const lastCalendarError = this.calendarService.getLastError();
+        const isRecentCalendarError = lastCalendarError &&
+          (new Date().getTime() - lastCalendarError.timestamp.getTime()) < 10000; // Last 10 seconds
+
         // Show detailed error to user for debugging
         const errorMessage = error?.message || 'Unknown error';
-        const userErrorMessage = `❌ Error: ${errorMessage}\n\n` +
-          `🔧 Debug info:\n` +
-          `• Time: ${new Date().toISOString()}\n` +
+        let userErrorMessage = `❌ **Something went wrong**\n\n`;
+
+        // Add specific guidance based on error type
+        if (isRecentCalendarError) {
+          userErrorMessage += `**Calendar Issue:** ${lastCalendarError.message}\n\n`;
+
+          if (lastCalendarError.type === 'token_expired' ||
+              lastCalendarError.type === 'unauthorized' ||
+              lastCalendarError.type === 'forbidden') {
+            userErrorMessage += `💡 **Quick Fix:** Use /auth to reconnect your calendar\n\n`;
+          } else if (lastCalendarError.type === 'network_error') {
+            userErrorMessage += `💡 **Quick Fix:** Check your internet connection and try again\n\n`;
+          }
+        } else {
+          userErrorMessage += `**Error:** ${errorMessage}\n\n`;
+        }
+
+        userErrorMessage += `🔧 **Debug Info:**\n` +
+          `• Time: ${new Date().toLocaleString()}\n` +
           `• Your message: "${ctx.message?.text || 'Unknown'}"\n` +
           `• Error type: ${error?.constructor?.name || 'Unknown'}\n\n` +
-          `Please check the logs or try again.`;
-        
-        await ctx.reply(userErrorMessage);
+          `Try using /status to check your connection or /help for available commands.`;
+
+        await ctx.reply(userErrorMessage, { parse_mode: 'Markdown' });
       }
     });
   }
@@ -393,5 +474,37 @@ export class TelegramService implements OnModuleInit {
     }
 
     return true;
+  }
+
+  private startHealthCheck(): void {
+    // Check calendar connection health every 5 minutes
+    setInterval(async () => {
+      try {
+        const authResult = await this.calendarService.checkAuthentication();
+
+        if (!authResult.isAuthenticated) {
+          console.error(`⚠️ [Health Check] Calendar connection issue: ${authResult.error || 'Not authenticated'}`);
+          console.error(`   Error type: ${authResult.errorType || 'unknown'}`);
+          console.error(`   Timestamp: ${new Date().toISOString()}`);
+        } else {
+          console.log('✅ [Health Check] Calendar connection healthy');
+        }
+
+        // Check for recent errors
+        const lastError = this.calendarService.getLastError();
+        if (lastError) {
+          const errorAgeMinutes = Math.floor((new Date().getTime() - lastError.timestamp.getTime()) / 60000);
+          if (errorAgeMinutes < 10) { // Show recent errors (less than 10 minutes old)
+            console.warn(`⚠️ [Health Check] Recent error detected (${errorAgeMinutes} min ago):`);
+            console.warn(`   Type: ${lastError.type}`);
+            console.warn(`   Message: ${lastError.message}`);
+          }
+        }
+      } catch (error) {
+        console.error('❌ [Health Check] Failed to check calendar health:', error.message);
+      }
+    }, 5 * 60 * 1000); // Every 5 minutes
+
+    console.log('🏥 Health check monitoring started (checking every 5 minutes)');
   }
 }
