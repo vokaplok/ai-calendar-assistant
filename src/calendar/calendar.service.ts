@@ -10,6 +10,7 @@ export class CalendarService {
   private calendar;
   private oauth2Client;
   private tokensFilePath = path.join(process.cwd(), 'data', 'google-tokens.json');
+  private lastError: { message: string; timestamp: Date; type: string } | null = null;
 
   constructor(private configService: ConfigService) {
     this.oauth2Client = new google.auth.OAuth2(
@@ -65,14 +66,45 @@ export class CalendarService {
     this.oauth2Client.setCredentials(tokens);
   }
 
-  async checkAuthentication(): Promise<boolean> {
+  getLastError(): { message: string; timestamp: Date; type: string } | null {
+    return this.lastError;
+  }
+
+  clearLastError(): void {
+    this.lastError = null;
+  }
+
+  async checkAuthentication(): Promise<{ isAuthenticated: boolean; error?: string; errorType?: string }> {
     try {
       // Try to list calendars to verify authentication
       await this.calendar.calendarList.list({ maxResults: 1 });
-      return true;
+      return { isAuthenticated: true };
     } catch (error) {
       console.log('Authentication check failed:', error.message);
-      return false;
+
+      // Determine error type for better user messaging
+      let errorType = 'unknown';
+      let errorMessage = error.message;
+
+      if (error.message?.includes('invalid_grant') || error.message?.includes('Token has been expired')) {
+        errorType = 'token_expired';
+        errorMessage = 'Authorization tokens have expired. Please re-authenticate using /auth command.';
+      } else if (error.message?.includes('invalid_client')) {
+        errorType = 'invalid_credentials';
+        errorMessage = 'Invalid OAuth credentials configured. Please contact administrator.';
+      } else if (error.message?.includes('insufficient permissions') || error.message?.includes('403')) {
+        errorType = 'insufficient_permissions';
+        errorMessage = 'Insufficient calendar permissions. Please re-authenticate using /auth command.';
+      } else if (error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED') {
+        errorType = 'network_error';
+        errorMessage = 'Cannot connect to Google Calendar API. Please check your internet connection.';
+      }
+
+      return {
+        isAuthenticated: false,
+        error: errorMessage,
+        errorType
+      };
     }
   }
 
@@ -88,6 +120,8 @@ export class CalendarService {
         
         // Set up automatic token refresh
         this.oauth2Client.on('tokens', (newTokens) => {
+          console.log('🔄 Token refresh triggered by Google OAuth client');
+
           if (newTokens.refresh_token) {
             tokens.refresh_token = newTokens.refresh_token;
           }
@@ -97,10 +131,18 @@ export class CalendarService {
           if (newTokens.expiry_date) {
             tokens.expiry_date = newTokens.expiry_date;
           }
-          
+
           // Save updated tokens
           this.saveTokens(tokens).catch(error => {
-            console.error('Error saving refreshed tokens:', error);
+            const errorMessage = 'Failed to save refreshed tokens to storage. Calendar may stop working.';
+            console.error('❌ ' + errorMessage, error);
+
+            // Store error for retrieval
+            this.lastError = {
+              message: errorMessage + ` Error: ${error.message}`,
+              timestamp: new Date(),
+              type: 'token_refresh_save_failed'
+            };
           });
         });
         
@@ -128,65 +170,119 @@ export class CalendarService {
   }
 
   async createEvent(parsedEvent: ParsedEvent): Promise<any> {
-    const timezone = this.configService.get<string>('DEFAULT_TIMEZONE') || 'Asia/Jerusalem';
-    const calendarId = this.configService.get<string>('GOOGLE_CALENDAR_DEFAULT_ID') || 'primary';
+    try {
+      const timezone = this.configService.get<string>('DEFAULT_TIMEZONE') || 'Asia/Jerusalem';
+      const calendarId = this.configService.get<string>('GOOGLE_CALENDAR_DEFAULT_ID') || 'primary';
 
-    // Convert local datetime to proper timezone format
-    const startDateTime = this.ensureTimezone(parsedEvent.start, timezone);
-    const endDateTime = this.ensureTimezone(parsedEvent.end, timezone);
+      // Convert local datetime to proper timezone format
+      const startDateTime = this.ensureTimezone(parsedEvent.start, timezone);
+      const endDateTime = this.ensureTimezone(parsedEvent.end, timezone);
 
-    const event = {
-      summary: parsedEvent.title,
-      start: {
-        dateTime: startDateTime,
-        timeZone: timezone,
-      },
-      end: {
-        dateTime: endDateTime,
-        timeZone: timezone,
-      },
-      location: parsedEvent.location,
-      description: parsedEvent.notes,
-      extendedProperties: {
-        private: {
-          source: 'aical-telegram',
-          confidence: parsedEvent.confidence.toString(),
+      const event = {
+        summary: parsedEvent.title,
+        start: {
+          dateTime: startDateTime,
+          timeZone: timezone,
         },
-      },
-    };
+        end: {
+          dateTime: endDateTime,
+          timeZone: timezone,
+        },
+        location: parsedEvent.location,
+        description: parsedEvent.notes,
+        extendedProperties: {
+          private: {
+            source: 'aical-telegram',
+            confidence: parsedEvent.confidence.toString(),
+          },
+        },
+      };
 
-    const response = await this.calendar.events.insert({
-      calendarId,
-      requestBody: event,
-    });
+      const response = await this.calendar.events.insert({
+        calendarId,
+        requestBody: event,
+      });
 
-    return response.data;
+      return response.data;
+    } catch (error) {
+      console.error('Failed to create calendar event:', error);
+
+      // Provide detailed error message
+      let userMessage = 'Failed to create calendar event. ';
+      let errorType = 'api_error';
+
+      if (error.message?.includes('invalid_grant') || error.message?.includes('Token has been expired')) {
+        userMessage += 'Your authorization has expired. Please use /auth to re-authenticate.';
+        errorType = 'token_expired';
+      } else if (error.code === 401 || error.message?.includes('Unauthorized')) {
+        userMessage += 'Not authorized. Please use /auth to authenticate with Google Calendar.';
+        errorType = 'unauthorized';
+      } else if (error.code === 403 || error.message?.includes('Forbidden')) {
+        userMessage += 'Insufficient permissions. Please re-authenticate using /auth command.';
+        errorType = 'forbidden';
+      } else if (error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED' || error.code === 'ETIMEDOUT') {
+        userMessage += 'Cannot connect to Google Calendar API. Please check your internet connection.';
+        errorType = 'network_error';
+      } else {
+        userMessage += `Error: ${error.message}`;
+      }
+
+      // Store error for monitoring
+      this.lastError = {
+        message: userMessage,
+        timestamp: new Date(),
+        type: errorType
+      };
+
+      throw new Error(userMessage);
+    }
   }
 
   async listEvents(maxResults = 10, timeMin?: Date, timeMax?: Date) {
-    const calendarId = this.configService.get<string>('GOOGLE_CALENDAR_DEFAULT_ID') || 'primary';
-    const timezone = this.configService.get<string>('DEFAULT_TIMEZONE') || 'Asia/Jerusalem';
+    try {
+      const calendarId = this.configService.get<string>('GOOGLE_CALENDAR_DEFAULT_ID') || 'primary';
+      const timezone = this.configService.get<string>('DEFAULT_TIMEZONE') || 'Asia/Jerusalem';
 
-    const params: any = {
-      calendarId,
-      maxResults,
-      singleEvents: true,
-      orderBy: 'startTime',
-      timeZone: timezone,
-    };
+      const params: any = {
+        calendarId,
+        maxResults,
+        singleEvents: true,
+        orderBy: 'startTime',
+        timeZone: timezone,
+      };
 
-    if (timeMin) {
-      params.timeMin = timeMin.toISOString();
-    } else {
-      params.timeMin = new Date().toISOString();
+      if (timeMin) {
+        params.timeMin = timeMin.toISOString();
+      } else {
+        params.timeMin = new Date().toISOString();
+      }
+
+      if (timeMax) {
+        params.timeMax = timeMax.toISOString();
+      }
+
+      const response = await this.calendar.events.list(params);
+      return response.data.items || [];
+    } catch (error) {
+      console.error('Failed to list calendar events:', error);
+
+      // Provide detailed error message
+      let userMessage = 'Failed to retrieve calendar events. ';
+
+      if (error.message?.includes('invalid_grant') || error.message?.includes('Token has been expired')) {
+        userMessage += 'Your authorization has expired. Please use /auth to re-authenticate.';
+      } else if (error.code === 401 || error.message?.includes('Unauthorized')) {
+        userMessage += 'Not authorized. Please use /auth to authenticate with Google Calendar.';
+      } else if (error.code === 403 || error.message?.includes('Forbidden')) {
+        userMessage += 'Insufficient permissions. Please re-authenticate using /auth command.';
+      } else if (error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED' || error.code === 'ETIMEDOUT') {
+        userMessage += 'Cannot connect to Google Calendar API. Please check your internet connection.';
+      } else {
+        userMessage += `Error: ${error.message}`;
+      }
+
+      throw new Error(userMessage);
     }
-
-    if (timeMax) {
-      params.timeMax = timeMax.toISOString();
-    }
-
-    const response = await this.calendar.events.list(params);
-    return response.data.items || [];
   }
 
   async getEventsForTimeRange(startTime: Date, endTime: Date) {
@@ -269,12 +365,35 @@ export class CalendarService {
   }
 
   async deleteEvent(eventId: string) {
-    const calendarId = this.configService.get<string>('GOOGLE_CALENDAR_DEFAULT_ID') || 'primary';
-    
-    await this.calendar.events.delete({
-      calendarId,
-      eventId,
-    });
+    try {
+      const calendarId = this.configService.get<string>('GOOGLE_CALENDAR_DEFAULT_ID') || 'primary';
+
+      await this.calendar.events.delete({
+        calendarId,
+        eventId,
+      });
+    } catch (error) {
+      console.error('Failed to delete calendar event:', error);
+
+      // Provide detailed error message
+      let userMessage = 'Failed to delete calendar event. ';
+
+      if (error.message?.includes('invalid_grant') || error.message?.includes('Token has been expired')) {
+        userMessage += 'Your authorization has expired. Please use /auth to re-authenticate.';
+      } else if (error.code === 401 || error.message?.includes('Unauthorized')) {
+        userMessage += 'Not authorized. Please use /auth to authenticate with Google Calendar.';
+      } else if (error.code === 403 || error.message?.includes('Forbidden')) {
+        userMessage += 'Insufficient permissions. Please re-authenticate using /auth command.';
+      } else if (error.code === 404 || error.message?.includes('Not Found')) {
+        userMessage += 'Event not found. It may have been already deleted.';
+      } else if (error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED' || error.code === 'ETIMEDOUT') {
+        userMessage += 'Cannot connect to Google Calendar API. Please check your internet connection.';
+      } else {
+        userMessage += `Error: ${error.message}`;
+      }
+
+      throw new Error(userMessage);
+    }
   }
 
   private ensureTimezone(dateTime: string, timezone: string): string {
