@@ -374,11 +374,13 @@ You MUST call the appropriate functions to fulfill the user's request. Don't jus
 
   async generateResponse(userQuery: string, functionResults: any[]): Promise<string> {
     try {
-      const resultsContext = functionResults.map(result => 
+      console.log('💬 [LLM] Generating simple response...');
+
+      const resultsContext = functionResults.map(result =>
         `Function: ${result.function}\nResult: ${JSON.stringify(result.data, null, 2)}`
       ).join('\n\n');
 
-      const systemPrompt = `You are a helpful calendar assistant. Based on the user's query and the function results, provide a natural, helpful response.
+      const systemPrompt = `You are a helpful calendar assistant. Based on the user's query and the function results, provide a natural, helpful response in Ukrainian.
 
 Be conversational and friendly. Format information clearly. Use emojis appropriately.
 
@@ -389,19 +391,41 @@ ${resultsContext}
 
 Provide a comprehensive response based on the results.`;
 
-      const completion = await this.openai.chat.completions.create({
+      console.log('   📡 Calling OpenAI API...');
+      const startTime = Date.now();
+
+      // Create promise with timeout
+      const completionPromise = this.openai.chat.completions.create({
         model: 'gpt-4-turbo-preview',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: 'Please provide a response based on the function results.' }
         ],
-        temperature: 0.7
+        temperature: 0.7,
+        timeout: 30000 // 30 second timeout
       });
 
-      return completion.choices[0]?.message?.content || 'I processed your request successfully.';
+      // Add additional timeout wrapper
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('OpenAI API timeout after 30 seconds')), 30000)
+      );
+
+      const completion = await Promise.race([completionPromise, timeoutPromise]) as any;
+
+      const duration = Date.now() - startTime;
+      console.log(`   ✅ OpenAI responded in ${duration}ms`);
+
+      const responseText = completion.choices[0]?.message?.content;
+      if (!responseText) {
+        console.warn('   ⚠️ Empty response from OpenAI, using fallback');
+        return this.fallbackResponse(userQuery, functionResults);
+      }
+
+      return responseText;
 
     } catch (error) {
-      console.error('Error generating response:', error);
+      console.error('❌ [LLM] Error generating response:', error?.message);
+      console.error('   Falling back to structured response...');
       return this.fallbackResponse(userQuery, functionResults);
     }
   }
@@ -475,23 +499,123 @@ Provide a comprehensive response based on the results.`;
 
 
   private fallbackResponse(userQuery: string, functionResults: any[]): string {
+    console.log('⚠️ Using fallback response (OpenAI unavailable)');
+
     if (functionResults.length === 0) {
-      return "I couldn't process your request. Please try again.";
+      return "Не вдалося обробити ваш запит. Спробуйте ще раз.";
     }
 
-    let response = "Here's what I found:\n\n";
-    
+    let response = "📋 **Ось що я знайшов:**\n\n";
+
     functionResults.forEach(result => {
+      if (!result.success) {
+        response += `❌ Помилка: ${result.error}\n\n`;
+        return;
+      }
+
       if (result.data) {
-        if (result.data.events) {
-          response += `📅 Found ${result.data.events.length} events\n`;
-        } else if (result.data.slots) {
-          response += `🕐 Found ${result.data.slots.length} available slots\n`;
-        } else if (result.data.deleted) {
-          response += `✅ Deleted ${result.data.deleted} events\n`;
+        // Handle events list
+        if (result.data.events && Array.isArray(result.data.events)) {
+          const events = result.data.events;
+
+          if (events.length === 0) {
+            response += `📅 Подій не знайдено\n\n`;
+          } else {
+            response += `📅 **Знайдено ${events.length} подій:**\n\n`;
+
+            events.forEach((event, index) => {
+              const title = event.summary || 'Без назви';
+              const start = event.start?.dateTime || event.start?.date;
+              const end = event.end?.dateTime || event.end?.date;
+
+              if (start) {
+                const startDate = new Date(start);
+                const endDate = end ? new Date(end) : null;
+
+                // Format date and time
+                const dateStr = startDate.toLocaleDateString('uk-UA', {
+                  timeZone: 'Asia/Jerusalem',
+                  day: 'numeric',
+                  month: 'long',
+                  weekday: 'short'
+                });
+
+                const timeStr = startDate.toLocaleTimeString('uk-UA', {
+                  timeZone: 'Asia/Jerusalem',
+                  hour: '2-digit',
+                  minute: '2-digit'
+                });
+
+                const endTimeStr = endDate ? endDate.toLocaleTimeString('uk-UA', {
+                  timeZone: 'Asia/Jerusalem',
+                  hour: '2-digit',
+                  minute: '2-digit'
+                }) : '';
+
+                response += `${index + 1}. **${title}**\n`;
+                response += `   📅 ${dateStr}\n`;
+                response += `   🕐 ${timeStr}${endTimeStr ? ' - ' + endTimeStr : ''}\n`;
+
+                if (event.location) {
+                  response += `   📍 ${event.location}\n`;
+                }
+
+                response += '\n';
+              }
+            });
+          }
+        }
+
+        // Handle free slots
+        else if (result.data.slots && Array.isArray(result.data.slots)) {
+          const slots = result.data.slots;
+
+          if (slots.length === 0) {
+            response += `🕐 Вільних слотів не знайдено\n\n`;
+          } else {
+            response += `🕐 **Знайдено ${slots.length} вільних слотів:**\n\n`;
+
+            slots.slice(0, 10).forEach((slot, index) => {
+              const start = new Date(slot.start);
+              const end = new Date(slot.end);
+
+              const timeStr = start.toLocaleTimeString('uk-UA', {
+                timeZone: 'Asia/Jerusalem',
+                hour: '2-digit',
+                minute: '2-digit'
+              });
+
+              const endTimeStr = end.toLocaleTimeString('uk-UA', {
+                timeZone: 'Asia/Jerusalem',
+                hour: '2-digit',
+                minute: '2-digit'
+              });
+
+              response += `${index + 1}. ${timeStr} - ${endTimeStr}\n`;
+            });
+
+            if (slots.length > 10) {
+              response += `\n...і ще ${slots.length - 10} слотів\n`;
+            }
+            response += '\n';
+          }
+        }
+
+        // Handle deleted events
+        else if (result.data.deleted !== undefined) {
+          response += `✅ Видалено ${result.data.deleted} подій\n\n`;
+        }
+
+        // Handle availability check
+        else if (result.data.available !== undefined) {
+          response += result.data.available
+            ? `✅ Ви вільні в цей час\n\n`
+            : `❌ У вас вже є подія в цей час\n\n`;
         }
       }
     });
+
+    response += `\n_Примітка: Відповідь згенерована в резервному режимі_`;
 
     return response;
   }
