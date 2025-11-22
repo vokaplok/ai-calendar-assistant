@@ -374,11 +374,13 @@ You MUST call the appropriate functions to fulfill the user's request. Don't jus
 
   async generateResponse(userQuery: string, functionResults: any[]): Promise<string> {
     try {
-      const resultsContext = functionResults.map(result => 
+      console.log('💬 [LLM] Generating simple response...');
+
+      const resultsContext = functionResults.map(result =>
         `Function: ${result.function}\nResult: ${JSON.stringify(result.data, null, 2)}`
       ).join('\n\n');
 
-      const systemPrompt = `You are a helpful calendar assistant. Based on the user's query and the function results, provide a natural, helpful response.
+      const systemPrompt = `You are a helpful calendar assistant. Based on the user's query and the function results, provide a natural, helpful response in Ukrainian.
 
 Be conversational and friendly. Format information clearly. Use emojis appropriately.
 
@@ -389,19 +391,41 @@ ${resultsContext}
 
 Provide a comprehensive response based on the results.`;
 
-      const completion = await this.openai.chat.completions.create({
+      console.log('   📡 Calling OpenAI API...');
+      const startTime = Date.now();
+
+      // Create promise with timeout
+      const completionPromise = this.openai.chat.completions.create({
         model: 'gpt-4-turbo-preview',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: 'Please provide a response based on the function results.' }
         ],
-        temperature: 0.7
+        temperature: 0.7,
+        timeout: 30000 // 30 second timeout
       });
 
-      return completion.choices[0]?.message?.content || 'I processed your request successfully.';
+      // Add additional timeout wrapper
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('OpenAI API timeout after 30 seconds')), 30000)
+      );
+
+      const completion = await Promise.race([completionPromise, timeoutPromise]) as any;
+
+      const duration = Date.now() - startTime;
+      console.log(`   ✅ OpenAI responded in ${duration}ms`);
+
+      const responseText = completion.choices[0]?.message?.content;
+      if (!responseText) {
+        console.warn('   ⚠️ Empty response from OpenAI, using fallback');
+        return this.fallbackResponse(userQuery, functionResults);
+      }
+
+      return responseText;
 
     } catch (error) {
-      console.error('Error generating response:', error);
+      console.error('❌ [LLM] Error generating response:', error?.message);
+      console.error('   Falling back to structured response...');
       return this.fallbackResponse(userQuery, functionResults);
     }
   }
@@ -475,23 +499,123 @@ Provide a comprehensive response based on the results.`;
 
 
   private fallbackResponse(userQuery: string, functionResults: any[]): string {
+    console.log('⚠️ Using fallback response (OpenAI unavailable)');
+
     if (functionResults.length === 0) {
-      return "I couldn't process your request. Please try again.";
+      return "Не вдалося обробити ваш запит. Спробуйте ще раз.";
     }
 
-    let response = "Here's what I found:\n\n";
-    
+    let response = "📋 **Ось що я знайшов:**\n\n";
+
     functionResults.forEach(result => {
+      if (!result.success) {
+        response += `❌ Помилка: ${result.error}\n\n`;
+        return;
+      }
+
       if (result.data) {
-        if (result.data.events) {
-          response += `📅 Found ${result.data.events.length} events\n`;
-        } else if (result.data.slots) {
-          response += `🕐 Found ${result.data.slots.length} available slots\n`;
-        } else if (result.data.deleted) {
-          response += `✅ Deleted ${result.data.deleted} events\n`;
+        // Handle events list
+        if (result.data.events && Array.isArray(result.data.events)) {
+          const events = result.data.events;
+
+          if (events.length === 0) {
+            response += `📅 Подій не знайдено\n\n`;
+          } else {
+            response += `📅 **Знайдено ${events.length} подій:**\n\n`;
+
+            events.forEach((event, index) => {
+              const title = event.summary || 'Без назви';
+              const start = event.start?.dateTime || event.start?.date;
+              const end = event.end?.dateTime || event.end?.date;
+
+              if (start) {
+                const startDate = new Date(start);
+                const endDate = end ? new Date(end) : null;
+
+                // Format date and time
+                const dateStr = startDate.toLocaleDateString('uk-UA', {
+                  timeZone: 'Asia/Jerusalem',
+                  day: 'numeric',
+                  month: 'long',
+                  weekday: 'short'
+                });
+
+                const timeStr = startDate.toLocaleTimeString('uk-UA', {
+                  timeZone: 'Asia/Jerusalem',
+                  hour: '2-digit',
+                  minute: '2-digit'
+                });
+
+                const endTimeStr = endDate ? endDate.toLocaleTimeString('uk-UA', {
+                  timeZone: 'Asia/Jerusalem',
+                  hour: '2-digit',
+                  minute: '2-digit'
+                }) : '';
+
+                response += `${index + 1}. **${title}**\n`;
+                response += `   📅 ${dateStr}\n`;
+                response += `   🕐 ${timeStr}${endTimeStr ? ' - ' + endTimeStr : ''}\n`;
+
+                if (event.location) {
+                  response += `   📍 ${event.location}\n`;
+                }
+
+                response += '\n';
+              }
+            });
+          }
+        }
+
+        // Handle free slots
+        else if (result.data.slots && Array.isArray(result.data.slots)) {
+          const slots = result.data.slots;
+
+          if (slots.length === 0) {
+            response += `🕐 Вільних слотів не знайдено\n\n`;
+          } else {
+            response += `🕐 **Знайдено ${slots.length} вільних слотів:**\n\n`;
+
+            slots.slice(0, 10).forEach((slot, index) => {
+              const start = new Date(slot.start);
+              const end = new Date(slot.end);
+
+              const timeStr = start.toLocaleTimeString('uk-UA', {
+                timeZone: 'Asia/Jerusalem',
+                hour: '2-digit',
+                minute: '2-digit'
+              });
+
+              const endTimeStr = end.toLocaleTimeString('uk-UA', {
+                timeZone: 'Asia/Jerusalem',
+                hour: '2-digit',
+                minute: '2-digit'
+              });
+
+              response += `${index + 1}. ${timeStr} - ${endTimeStr}\n`;
+            });
+
+            if (slots.length > 10) {
+              response += `\n...і ще ${slots.length - 10} слотів\n`;
+            }
+            response += '\n';
+          }
+        }
+
+        // Handle deleted events
+        else if (result.data.deleted !== undefined) {
+          response += `✅ Видалено ${result.data.deleted} подій\n\n`;
+        }
+
+        // Handle availability check
+        else if (result.data.available !== undefined) {
+          response += result.data.available
+            ? `✅ Ви вільні в цей час\n\n`
+            : `❌ У вас вже є подія в цей час\n\n`;
         }
       }
     });
+
+    response += `\n_Примітка: Відповідь згенерована в резервному режимі_`;
 
     return response;
   }
@@ -586,15 +710,18 @@ OTHER RULES:
 You MUST call the appropriate functions to fulfill the user's request.`;
 
       // Debug: Log what we're sending to OpenAI
-      console.log('🔍 SENDING TO LLM:');
-      console.log('Model: gpt-4');
-      console.log('User query:', userQuery);
-      console.log('System prompt preview:', systemPrompt.slice(-500)); // Last 500 chars
-      console.log('Tools available:', CALENDAR_FUNCTIONS.length);
-      console.log('Parallel tool calls: true');
-      console.log('Tool choice: required');
+      console.log('🔍 [LLM] SENDING TO LLM:');
+      console.log('   Model: gpt-4-turbo-preview');
+      console.log('   User query:', userQuery);
+      console.log('   Tools available:', CALENDAR_FUNCTIONS.length);
+      console.log('   Parallel tool calls: true');
+      console.log('   Tool choice: required');
 
-      const completion = await this.openai.chat.completions.create({
+      console.log('   📡 Calling OpenAI API for function planning...');
+      const planStartTime = Date.now();
+
+      // Create promise with timeout
+      const completionPromise = this.openai.chat.completions.create({
         model: 'gpt-4-turbo-preview',
         messages: [
           { role: 'system', content: systemPrompt },
@@ -612,8 +739,19 @@ You MUST call the appropriate functions to fulfill the user's request.`;
         tool_choice: 'required',
         parallel_tool_calls: true,
         temperature: 0.0,
-        max_tokens: 4000
+        max_tokens: 4000,
+        timeout: 30000 // 30 second timeout
       });
+
+      // Add additional timeout wrapper
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('OpenAI API timeout after 30 seconds (planning phase)')), 30000)
+      );
+
+      const completion = await Promise.race([completionPromise, timeoutPromise]) as any;
+
+      const planDuration = Date.now() - planStartTime;
+      console.log(`   ✅ OpenAI planning completed in ${planDuration}ms`);
 
       // Debug: Log the exact response from OpenAI
       console.log('🔍 LLM RESPONSE:');
@@ -661,10 +799,19 @@ You MUST call the appropriate functions to fulfill the user's request.`;
 
   async generateResponseWithContext(userQuery: string, functionResults: any[], context: ConversationContext): Promise<string> {
     try {
+      console.log('🤖 [LLM] Generating response with context...');
+      console.log(`   Query: "${userQuery}"`);
+      console.log(`   Function results: ${functionResults.length} results`);
+
       // Check for errors in function results and format them clearly
       const errors = functionResults.filter(result => !result.success);
       const successful = functionResults.filter(result => result.success);
-      
+
+      if (errors.length > 0) {
+        console.warn(`   ⚠️ ${errors.length} function(s) failed`);
+        errors.forEach(err => console.warn(`      - ${err.function}: ${err.error}`));
+      }
+
       const resultsContext = functionResults.map(result => {
         if (result.success) {
           return `Function: ${result.function}\nResult: ${JSON.stringify(result.data, null, 2)}`;
@@ -673,7 +820,7 @@ You MUST call the appropriate functions to fulfill the user's request.`;
         }
       }).join('\n\n');
 
-      const memoryContext = context.relevantMemories.length > 0 
+      const memoryContext = context.relevantMemories.length > 0
         ? `\nUser's relevant memories:\n${context.relevantMemories.map(m => `- ${m.content}`).join('\n')}`
         : '';
 
@@ -698,7 +845,7 @@ ERRORS ENCOUNTERED: ${errors.length} function(s) failed
 
 Guidelines:
 - If function results contain time slots, show ONLY those fresh results
-- If function results contain events, show ONLY those fresh results  
+- If function results contain events, show ONLY those fresh results
 - Use stored memories for context and preferences, not current data
 - When showing numbered lists, make it clear users can respond with just the number
 - If there are errors, explain them clearly and suggest solutions
@@ -706,19 +853,45 @@ Guidelines:
 
 Provide a comprehensive, personalized response based on the FRESH function results.`;
 
-      const completion = await this.openai.chat.completions.create({
+      console.log('   📡 Calling OpenAI API...');
+      const startTime = Date.now();
+
+      // Create promise with timeout
+      const completionPromise = this.openai.chat.completions.create({
         model: 'gpt-4-turbo-preview',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: 'Please provide a response based on the function results and context.' }
         ],
-        temperature: 0.7
+        temperature: 0.7,
+        timeout: 30000 // 30 second timeout
       });
 
-      return completion.choices[0]?.message?.content || 'I processed your request successfully with your preferences in mind.';
+      // Add additional timeout wrapper
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('OpenAI API timeout after 30 seconds')), 30000)
+      );
+
+      const completion = await Promise.race([completionPromise, timeoutPromise]) as any;
+
+      const duration = Date.now() - startTime;
+      console.log(`   ✅ OpenAI responded in ${duration}ms`);
+
+      const responseText = completion.choices[0]?.message?.content;
+      if (!responseText) {
+        console.warn('   ⚠️ Empty response from OpenAI, using fallback');
+        return this.generateResponse(userQuery, functionResults);
+      }
+
+      console.log(`   📝 Response length: ${responseText.length} characters`);
+      return responseText;
 
     } catch (error) {
-      console.error('Error generating response with context:', error);
+      console.error('❌ [LLM] Error generating response with context:', error);
+      console.error('   Error type:', error?.constructor?.name);
+      console.error('   Error message:', error?.message);
+      console.error('   Falling back to simple response generation...');
+
       return this.generateResponse(userQuery, functionResults);
     }
   }
