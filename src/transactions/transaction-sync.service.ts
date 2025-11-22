@@ -1,11 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
-// Import transaction parsers (will be converted from JS modules)
+// Import transaction parsers
 import { GoogleSheetClient } from './google-sheet.client';
 import { BrexParser } from './parsers/brex.parser';
 import { StripeParser } from './parsers/stripe.parser';
-import { PrivatBankParser } from './parsers/privatbank.parser';
 
 export interface SyncResult {
   source: string;
@@ -20,15 +19,13 @@ export class TransactionSyncService {
   private parsers: {
     brex: BrexParser;
     stripe: StripeParser;
-    privatbank: PrivatBankParser;
   };
 
   constructor(private configService: ConfigService) {
     this.sheetClient = new GoogleSheetClient(configService);
     this.parsers = {
       brex: new BrexParser(configService),
-      stripe: new StripeParser(configService),
-      privatbank: new PrivatBankParser(configService)
+      stripe: new StripeParser(configService)
     };
   }
 
@@ -49,8 +46,7 @@ export class TransactionSyncService {
     const tests = [
       { name: 'Google Sheets', test: () => this.sheetClient.testConnection() },
       { name: 'Brex', test: () => this.parsers.brex.testConnection() },
-      { name: 'Stripe', test: () => this.parsers.stripe.testConnection() },
-      { name: 'PrivatBank', test: () => this.parsers.privatbank.testConnection() }
+      { name: 'Stripe', test: () => this.parsers.stripe.testConnection() }
     ];
 
     let allPassed = true;
@@ -71,7 +67,7 @@ export class TransactionSyncService {
   /**
    * Sync all sources or specific sources
    */
-  async syncAll(sources: string[] = ['brex', 'stripe', 'privatbank']): Promise<SyncResult[]> {
+  async syncAll(sources: string[] = ['brex', 'stripe']): Promise<SyncResult[]> {
     await this.initialize();
     
     const results: SyncResult[] = [];
@@ -86,9 +82,6 @@ export class TransactionSyncService {
             break;
           case 'stripe':
             result = await this.syncSource('stripe', this.parsers.stripe, 'Stripe');
-            break;
-          case 'privatbank':
-            result = await this.syncSource('privatbank', this.parsers.privatbank, 'PrivatBank');
             break;
           default:
             console.log(`⚠️ Unknown source: ${source}`);

@@ -98,6 +98,11 @@ public
 tmp/
 temp/
 
+# Credentials (sensitive data)
+credentials/
+*.json
+service-account.json
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

@@ -4,7 +4,6 @@ import { TransactionSyncService } from './transaction-sync.service';
 import { GoogleSheetClient } from './google-sheet.client';
 import { BrexParser } from './parsers/brex.parser';
 import { StripeParser } from './parsers/stripe.parser';
-import { PrivatBankParser } from './parsers/privatbank.parser';
 
 @Module({
   imports: [ConfigModule],
@@ -13,7 +12,6 @@ import { PrivatBankParser } from './parsers/privatbank.parser';
     GoogleSheetClient,
     BrexParser,
     StripeParser,
-    PrivatBankParser,
   ],
   exports: [TransactionSyncService],
 })
