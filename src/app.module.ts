@@ -3,6 +3,7 @@ import { ConfigModule } from '@nestjs/config';
 import { TelegramModule } from './telegram/telegram.module';
 import { CalendarModule } from './calendar/calendar.module';
 import { LlmModule } from './llm/llm.module';
+import { TransactionModule } from './transactions/transaction.module';
 
 @Module({
   imports: [
@@ -13,6 +14,7 @@ import { LlmModule } from './llm/llm.module';
     TelegramModule,
     CalendarModule,
     LlmModule,
+    TransactionModule,
   ],
 })
 export class AppModule {}

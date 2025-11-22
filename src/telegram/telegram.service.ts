@@ -1,12 +1,11 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Telegraf } from 'telegraf';
-import { spawn } from 'child_process';
-import * as fs from 'fs';
 import { LlmService } from '../llm/llm.service';
 import { CalendarService } from '../calendar/calendar.service';
 import { CalendarOrchestratorService } from '../calendar/calendar-orchestrator.service';
 import { MemoryService } from '../memory/memory.service';
+import { TransactionSyncService } from '../transactions/transaction-sync.service';
 import { ParsedEvent, UserIntent } from '../common/types';
 
 @Injectable()
@@ -19,6 +18,7 @@ export class TelegramService implements OnModuleInit {
     private calendarService: CalendarService,
     private orchestratorService: CalendarOrchestratorService,
     private memoryService: MemoryService,
+    private transactionSyncService: TransactionSyncService,
   ) {
     const botToken = this.configService.get<string>('TELEGRAM_BOT_TOKEN');
     if (!botToken) {
@@ -159,7 +159,7 @@ export class TelegramService implements OnModuleInit {
         const result = await this.runTransactionSync();
         
         if (result.success) {
-          const summary = this.formatTransactionSummary(result.data);
+          const summary = `📊 **Sync Results:**\n• Total processed: ${result.data.totalProcessed}\n• New transactions: ${result.data.newTransactions}\n${result.data.errors.length > 0 ? `\n⚠️ **Errors:** ${result.data.errors.length}` : ''}`;
           await ctx.reply(`✅ **Transaction sync completed!**\n\n${summary}`, { parse_mode: 'Markdown' });
         } else {
           await ctx.reply(`❌ **Transaction sync failed:**\n\n${result.error}`, { parse_mode: 'Markdown' });
@@ -529,118 +529,34 @@ export class TelegramService implements OnModuleInit {
   }
 
   private async runTransactionSync(): Promise<{ success: boolean; data?: any; error?: string }> {
-    return new Promise((resolve) => {
-      // Check if we're in production/Docker environment
-      const isProduction = process.env.NODE_ENV === 'production' || process.env.RENDER === 'true';
+    try {
+      console.log('🚀 Starting transaction sync using integrated service...');
       
-      if (isProduction) {
-        resolve({
-          success: false,
-          error: 'Transaction sync is not available in production environment. This feature requires local development setup with the transaction-parser project.'
-        });
-        return;
-      }
-
-      const transactionParserPath = '/Users/andriikolpakov/Desktop/Generect/generect_code/base/tools/projects_render/projects/transaction-parser';
+      // Run the sync using the integrated service
+      const results = await this.transactionSyncService.syncAll();
       
-      // Check if the transaction parser directory exists
-      if (!fs.existsSync(transactionParserPath)) {
-        resolve({
-          success: false,
-          error: 'Transaction parser project not found. This feature is only available in development environment.'
-        });
-        return;
-      }
+      // Format results for the summary
+      const summary = this.transactionSyncService.printSummary(results);
       
-      // Run npm start in the transaction-parser directory
-      const childProcess = spawn('npm', ['start'], {
-        cwd: transactionParserPath,
-        stdio: 'pipe'
-      });
-
-      let output = '';
-      let errorOutput = '';
-
-      childProcess.stdout.on('data', (data) => {
-        output += data.toString();
-      });
-
-      childProcess.stderr.on('data', (data) => {
-        errorOutput += data.toString();
-      });
-
-      childProcess.on('close', (code) => {
-        if (code === 0) {
-          resolve({
-            success: true,
-            data: this.parseTransactionOutput(output)
-          });
-        } else {
-          resolve({
-            success: false,
-            error: errorOutput || output || `Process exited with code ${code}`
-          });
+      return {
+        success: true,
+        data: {
+          sources: results.map(r => r.source),
+          totalProcessed: results.reduce((sum, r) => sum + r.total, 0),
+          newTransactions: results.reduce((sum, r) => sum + r.new, 0),
+          errors: results.filter(r => r.errors && r.errors.length > 0).flatMap(r => r.errors),
+          summary
         }
-      });
-
-      childProcess.on('error', (error) => {
-        resolve({
-          success: false,
-          error: error.message
-        });
-      });
-    });
-  }
-
-  private parseTransactionOutput(output: string): any {
-    const lines = output.split('\n');
-    const summary = {
-      sources: [],
-      totalProcessed: 0,
-      newTransactions: 0,
-      errors: []
-    };
-
-    for (const line of lines) {
-      if (line.includes('✅') && line.includes('transactions')) {
-        const match = line.match(/(\d+)/);
-        if (match) {
-          summary.totalProcessed += parseInt(match[1]);
-        }
-      }
-      if (line.includes('new transactions')) {
-        const match = line.match(/(\d+)/);
-        if (match) {
-          summary.newTransactions += parseInt(match[1]);
-        }
-      }
-      if (line.includes('❌') || line.includes('Error')) {
-        summary.errors.push(line.trim());
-      }
+      };
+    } catch (error) {
+      console.error('❌ Transaction sync failed:', error);
+      return {
+        success: false,
+        error: error.message
+      };
     }
-
-    return summary;
   }
 
-  private formatTransactionSummary(data: any): string {
-    const { totalProcessed, newTransactions, errors } = data;
-    
-    let summary = `📊 **Sync Results:**\n`;
-    summary += `• Total processed: ${totalProcessed}\n`;
-    summary += `• New transactions: ${newTransactions}\n`;
-    
-    if (errors.length > 0) {
-      summary += `\n⚠️ **Warnings/Errors:**\n`;
-      errors.slice(0, 3).forEach((error: string) => {
-        summary += `• ${error}\n`;
-      });
-      if (errors.length > 3) {
-        summary += `• ... and ${errors.length - 3} more\n`;
-      }
-    }
-
-    return summary;
-  }
 
   private startHealthCheck(): void {
     // Check calendar connection health every 5 minutes
