@@ -2,6 +2,7 @@ import { Injectable, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Telegraf } from 'telegraf';
 import { spawn } from 'child_process';
+import * as fs from 'fs';
 import { LlmService } from '../llm/llm.service';
 import { CalendarService } from '../calendar/calendar.service';
 import { CalendarOrchestratorService } from '../calendar/calendar-orchestrator.service';
@@ -529,10 +530,30 @@ export class TelegramService implements OnModuleInit {
 
   private async runTransactionSync(): Promise<{ success: boolean; data?: any; error?: string }> {
     return new Promise((resolve) => {
+      // Check if we're in production/Docker environment
+      const isProduction = process.env.NODE_ENV === 'production' || process.env.RENDER === 'true';
+      
+      if (isProduction) {
+        resolve({
+          success: false,
+          error: 'Transaction sync is not available in production environment. This feature requires local development setup with the transaction-parser project.'
+        });
+        return;
+      }
+
       const transactionParserPath = '/Users/andriikolpakov/Desktop/Generect/generect_code/base/tools/projects_render/projects/transaction-parser';
       
+      // Check if the transaction parser directory exists
+      if (!fs.existsSync(transactionParserPath)) {
+        resolve({
+          success: false,
+          error: 'Transaction parser project not found. This feature is only available in development environment.'
+        });
+        return;
+      }
+      
       // Run npm start in the transaction-parser directory
-      const process = spawn('npm', ['start'], {
+      const childProcess = spawn('npm', ['start'], {
         cwd: transactionParserPath,
         stdio: 'pipe'
       });
@@ -540,15 +561,15 @@ export class TelegramService implements OnModuleInit {
       let output = '';
       let errorOutput = '';
 
-      process.stdout.on('data', (data) => {
+      childProcess.stdout.on('data', (data) => {
         output += data.toString();
       });
 
-      process.stderr.on('data', (data) => {
+      childProcess.stderr.on('data', (data) => {
         errorOutput += data.toString();
       });
 
-      process.on('close', (code) => {
+      childProcess.on('close', (code) => {
         if (code === 0) {
           resolve({
             success: true,
@@ -562,7 +583,7 @@ export class TelegramService implements OnModuleInit {
         }
       });
 
-      process.on('error', (error) => {
+      childProcess.on('error', (error) => {
         resolve({
           success: false,
           error: error.message
