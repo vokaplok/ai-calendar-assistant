@@ -23,13 +23,15 @@ export class BrexParser extends BaseParser {
         return false;
       }
 
-      const response = await axios.get(`${this.baseUrl}/v2/accounts`, {
+      // Try different Brex API endpoints to find working one
+      // First try to get user info which is usually accessible with basic permissions
+      const response = await axios.get(`${this.baseUrl}/v1/companies`, {
         headers: {
           'Authorization': `Bearer ${this.apiKey}`,
         },
       });
 
-      console.log(`✅ Brex: Connected, found ${response.data.items?.length || 0} accounts`);
+      console.log(`✅ Brex: Connected to company ${response.data.legal_name || 'Unknown'}`);
       return true;
     } catch (error) {
       console.log(`❌ Brex: ${error.response?.data?.message || error.message}`);
@@ -78,8 +80,11 @@ export class BrexParser extends BaseParser {
         console.log(`📥 Found ${transactions.length} transactions for ${account.name}`);
 
         for (const tx of transactions) {
+          // Create unique ID by combining account name, date, amount and merchant info
+          const uniqueId = `brex_${account.name.toLowerCase().replace(/\s+/g, '_')}_${tx.initiated_at_date}_${Math.abs(tx.amount.amount)}_${tx.id.slice(-8)}`;
+          
           allTransactions.push({
-            id: tx.id,
+            id: uniqueId,
             date: this.formatDate(tx.initiated_at_date),
             amount: Math.abs(tx.amount.amount / 100), // Convert from cents
             currency: tx.amount.currency,

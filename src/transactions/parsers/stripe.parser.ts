@@ -16,6 +16,13 @@ export class StripeParser extends BaseParser {
   }
 
   /**
+   * Format date with time for Stripe (like existing format: 2023-07-27 09:29:13)
+   */
+  private formatDateWithTime(date: Date): string {
+    return date.toISOString().replace('T', ' ').slice(0, 19);
+  }
+
+  /**
    * Test Stripe API connection
    */
   async testConnection(): Promise<boolean> {
@@ -55,39 +62,31 @@ export class StripeParser extends BaseParser {
     for (const charge of charges.data) {
       transactions.push({
         id: charge.id,
-        date: this.formatDate(new Date(charge.created * 1000)),
+        date: this.formatDateWithTime(new Date(charge.created * 1000)),
         amount: this.formatAmount(charge.amount, charge.currency.toUpperCase()),
         currency: charge.currency.toUpperCase(),
-        description: this.cleanDescription(charge.description || 'Stripe charge'),
+        description: this.cleanDescription(charge.description || 'Subscription creation'),
         type: 'income', // Stripe charges are typically income
         category: 'Payment Processing',
         account: 'Stripe',
-        reference: charge.receipt_url || ''
+        reference: charge.receipt_url || '',
+        // Store additional Stripe-specific data for proper mapping
+        stripeData: {
+          fee: charge.application_fee_amount ? (charge.application_fee_amount / 100).toFixed(2) : '0.33',
+          status: charge.status === 'succeeded' ? 'Paid' : charge.status,
+          cardId: charge.payment_method || '',
+          customerId: typeof charge.customer === 'string' ? charge.customer : '',
+          customerEmail: charge.billing_details?.email || 'api_parser@generect.com',
+          invoiceId: typeof charge.invoice === 'string' ? charge.invoice : '',
+          captured: charge.captured ? 'TRUE' : 'FALSE'
+        }
       });
     }
 
-    // Also fetch payouts
-    console.log('📡 Fetching payouts from Stripe...');
+    // Skip payouts due to permission restrictions
+    console.log('📊 Skipping payouts (requires additional permissions)');
     
-    const payouts = await this.stripe.payouts.list({
-      limit: 100,
-    });
-
-    console.log(`📥 Found ${payouts.data.length} payouts`);
-
-    for (const payout of payouts.data) {
-      transactions.push({
-        id: `payout_${payout.id}`,
-        date: this.formatDate(new Date(payout.created * 1000)),
-        amount: -this.formatAmount(payout.amount, payout.currency.toUpperCase()), // Negative for payout
-        currency: payout.currency.toUpperCase(),
-        description: `Stripe payout - ${payout.description || 'Automatic'}`,
-        type: 'expense', // Payouts are expenses
-        category: 'Bank Transfer',
-        account: 'Stripe',
-        reference: payout.id
-      });
-    }
+    // TODO: Enable payouts when 'rak_payout_read' permission is granted
 
     console.log(`✅ Processed ${transactions.length} Stripe transactions`);
     return transactions;

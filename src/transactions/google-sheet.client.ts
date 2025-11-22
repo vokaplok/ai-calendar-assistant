@@ -52,13 +52,57 @@ export class GoogleSheetClient {
   }
 
   /**
+   * Get existing sheet structure and headers
+   */
+  async getSheetStructure(sheetName: string): Promise<any> {
+    try {
+      const response = await this.sheets.spreadsheets.values.get({
+        spreadsheetId: this.spreadsheetId,
+        range: `${sheetName}!1:5`, // Get first 5 rows to see structure
+      });
+
+      console.log(`📋 Sheet ${sheetName} structure:`);
+      if (response.data.values) {
+        response.data.values.forEach((row, index) => {
+          console.log(`   Row ${index + 1}:`, row);
+        });
+      } else {
+        console.log(`   No data found in ${sheetName}`);
+      }
+      return response.data.values;
+    } catch (error) {
+      console.log(`⚠️  Could not read ${sheetName} structure: ${error.message}`);
+      return null;
+    }
+  }
+
+  /**
+   * List all available sheets in spreadsheet
+   */
+  async listAllSheets(): Promise<string[]> {
+    try {
+      const response = await this.sheets.spreadsheets.get({
+        spreadsheetId: this.spreadsheetId,
+      });
+
+      const sheetNames = response.data.sheets?.map(sheet => sheet.properties?.title || 'Unnamed') || [];
+      console.log(`📋 Available sheets:`, sheetNames);
+      return sheetNames;
+    } catch (error) {
+      console.log(`⚠️  Could not list sheets: ${error.message}`);
+      return [];
+    }
+  }
+
+  /**
    * Get existing transaction IDs from a sheet
    */
   async getExistingIds(sheetName: string): Promise<Set<string>> {
     try {
+      // Use column A for ID in both Auto_input.Stripe and Auto_input.Brex
       const response = await this.sheets.spreadsheets.values.get({
         spreadsheetId: this.spreadsheetId,
-        range: `${sheetName}!A:A`, // Assuming ID is in column A
+        range: `${sheetName}!A:A`, // ID is in column A for both sheets
       });
 
       const values = response.data.values || [];
@@ -79,24 +123,81 @@ export class GoogleSheetClient {
   }
 
   /**
-   * Add transactions to a sheet
+   * Add transactions to a sheet with proper format mapping
    */
   async addTransactions(sheetName: string, transactions: Transaction[]): Promise<number> {
     if (transactions.length === 0) return 0;
 
     try {
-      // Prepare rows for insertion
-      const rows = transactions.map(t => [
-        t.id,
-        t.date,
-        t.amount,
-        t.currency,
-        t.description,
-        t.type,
-        t.category || '',
-        t.account || '',
-        t.reference || ''
-      ]);
+      let rows: any[];
+      
+      if (sheetName === 'Auto_input.Stripe') {
+        // Map to Stripe format exactly like existing records
+        // Only fill columns A-W, leave X+ for formulas
+        rows = transactions.map(t => [
+          t.id,                                    // A: id
+          t.date,                                  // B: Created date (UTC) with time
+          t.amount.toFixed(2),                     // C: Amount (with .00)
+          '0.00',                                  // D: Amount Refunded
+          t.currency.toLowerCase(),                // E: Currency
+          t.stripeData?.captured || 'TRUE',        // F: Captured
+          t.amount.toFixed(2),                     // G: Converted Amount
+          '0.00',                                  // H: Converted Amount Refunded
+          t.currency.toLowerCase(),                // I: Converted Currency
+          '',                                      // J: Decline Reason
+          t.description,                           // K: Description
+          t.stripeData?.fee || '0.33',            // L: Fee (from Stripe data)
+          '',                                      // M: Refunded date
+          'GENERECT, INC.',                        // N: Statement Descriptor
+          t.stripeData?.status || 'Paid',          // O: Status (from Stripe data)
+          'Payment complete.',                     // P: Seller Message
+          '0',                                     // Q: Taxes On Fee
+          t.stripeData?.cardId || '',              // R: Card ID (from Stripe data)
+          t.stripeData?.customerId || '',          // S: Customer ID (from Stripe data)
+          '',                                      // T: Customer Description
+          t.stripeData?.customerEmail || 'api_parser@generect.com', // U: Customer Email
+          t.stripeData?.invoiceId || '',           // V: Invoice ID (from Stripe data)
+          ''                                       // W: Transfer
+          // X+ columns (domain, category, accounts, etc.) have formulas - don't overwrite
+        ]);
+      } else if (sheetName === 'Auto_input.Brex') {
+        // Map to Brex format: [Date, To/From, Amount, Memo, ...]
+        rows = transactions.map(t => [
+          new Date(t.date).toLocaleDateString('en-GB'), // A: Date (dd/mm/yy)
+          t.description || 'GENERECT, INC.',             // B: To/From
+          t.type === 'expense' ? `-$${t.amount}` : `+$${t.amount}`, // C: Amount with sign
+          '',                                             // D: Memo
+          t.description,                                  // E: External Memo
+          '',                                             // F: Originator Identification
+          'Brex',                                         // G: Initiated By
+          'Card',                                         // H: Method
+          'Finalized',                                    // I: Status
+          'TRUE',                                         // J: If Finalized Transaction
+          '',                                             // K: empty
+          '',                                             // L: empty
+          t.category || 'Business Expense',               // M: Accounts
+          t.type === 'expense' ? 'Expenses' : 'Income',   // N: Type of Account
+          '',                                             // O: empty
+          'Bank Account Brex',                            // P: From Account
+          t.category || 'Business Expense',               // Q: To Account
+          '',                                             // R: empty
+          new Date().toLocaleDateString('en-GB').replace(/\//g, ''), // S: Дата Cash Method
+          new Date().toLocaleDateString('en-GB').replace(/\//g, '')  // T: Дата Accrual Method
+        ]);
+      } else {
+        // Default format
+        rows = transactions.map(t => [
+          t.id,
+          t.date,
+          t.amount,
+          t.currency,
+          t.description,
+          t.type,
+          t.category || '',
+          t.account || '',
+          t.reference || ''
+        ]);
+      }
 
       // Find the last row to append after
       const existingData = await this.sheets.spreadsheets.values.get({
@@ -105,7 +206,19 @@ export class GoogleSheetClient {
       });
 
       const lastRow = (existingData.data.values?.length || 0) + 1;
-      const range = `${sheetName}!A${lastRow}:I${lastRow + transactions.length - 1}`;
+      
+      // Determine range based on sheet type
+      let range: string;
+      if (sheetName === 'Auto_input.Stripe') {
+        // Stripe only write A to W (23 columns), X+ have formulas
+        range = `${sheetName}!A${lastRow}:W${lastRow + transactions.length - 1}`;
+      } else if (sheetName === 'Auto_input.Brex') {
+        // Brex has 20 columns (A to T)
+        range = `${sheetName}!A${lastRow}:T${lastRow + transactions.length - 1}`;
+      } else {
+        // Default 9 columns
+        range = `${sheetName}!A${lastRow}:I${lastRow + transactions.length - 1}`;
+      }
 
       await this.sheets.spreadsheets.values.update({
         spreadsheetId: this.spreadsheetId,

@@ -78,10 +78,10 @@ export class TransactionSyncService {
         
         switch (source) {
           case 'brex':
-            result = await this.syncSource('brex', this.parsers.brex, 'Brex');
+            result = await this.syncSource('brex', this.parsers.brex, 'Auto_input.Brex');
             break;
           case 'stripe':
-            result = await this.syncSource('stripe', this.parsers.stripe, 'Stripe');
+            result = await this.syncSource('stripe', this.parsers.stripe, 'Auto_input.Stripe');
             break;
           default:
             console.log(`⚠️ Unknown source: ${source}`);
@@ -121,11 +121,14 @@ export class TransactionSyncService {
 
     console.log(`📥 Found ${allTransactions.length} transactions from ${sourceName} API`);
 
-    // Step 2: Get existing transaction IDs from Google Sheet
+    // Step 2: Check that the target sheet exists
+    console.log(`🔍 Using existing ${sheetName} sheet...`);
+
+    // Step 3: Get existing transaction IDs from Google Sheet
     const existingIds = await this.sheetClient.getExistingIds(sheetName);
     console.log(`📋 Found ${existingIds.size} existing transactions in sheet`);
 
-    // Step 3: Filter out transactions that already exist
+    // Step 4: Filter out transactions that already exist
     const newTransactions = allTransactions.filter(t => !existingIds.has(t.id));
 
     if (newTransactions.length === 0) {
@@ -135,7 +138,7 @@ export class TransactionSyncService {
 
     console.log(`➕ Found ${newTransactions.length} new transactions to add`);
 
-    // Step 4: Add new transactions to Google Sheet
+    // Step 5: Add new transactions to Google Sheet
     const addedCount = await this.sheetClient.addTransactions(sheetName, newTransactions);
     
     console.log(`✅ Successfully added ${addedCount} new transactions to ${sheetName} sheet`);

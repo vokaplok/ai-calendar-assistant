@@ -10,6 +10,15 @@ export interface Transaction {
   category?: string;
   account?: string;
   reference?: string;
+  stripeData?: {
+    fee: string;
+    status: string;
+    cardId: string;
+    customerId: string;
+    customerEmail: string;
+    invoiceId: string;
+    captured: string;
+  };
 }
 
 export abstract class BaseParser {

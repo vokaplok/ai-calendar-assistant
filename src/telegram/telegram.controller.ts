@@ -31,6 +31,38 @@ export class TelegramController {
     return { ok: true };
   }
 
+  @Get('analyze-sheets')
+  async analyzeSheets(): Promise<any> {
+    try {
+      console.log('🧪 Analyzing Google Sheets structure...');
+      
+      await this.transactionSyncService.initialize();
+      const sheetClient = (this.transactionSyncService as any).sheetClient;
+      
+      // List all sheets
+      const allSheets = await sheetClient.listAllSheets();
+      
+      // Analyze Auto_input sheets
+      const autoInputSheets = allSheets.filter(name => name.startsWith('Auto_input'));
+      const structures = {};
+      
+      for (const sheetName of autoInputSheets) {
+        structures[sheetName] = await sheetClient.getSheetStructure(sheetName);
+      }
+      
+      return {
+        status: 'success',
+        allSheets,
+        autoInputSheets,
+        structures,
+        timestamp: new Date().toISOString()
+      };
+    } catch (error) {
+      console.error('❌ Sheet analysis failed:', error);
+      return { status: 'error', message: error.message };
+    }
+  }
+
   @Get('test-transactions')
   async testTransactions() {
     try {
