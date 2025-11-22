@@ -401,7 +401,8 @@ Provide a comprehensive response based on the results.`;
           { role: 'system', content: systemPrompt },
           { role: 'user', content: 'Please provide a response based on the function results.' }
         ],
-        temperature: 0.7,
+        temperature: 0.7
+      }, {
         timeout: 30000 // 30 second timeout
       });
 
@@ -739,7 +740,8 @@ You MUST call the appropriate functions to fulfill the user's request.`;
         tool_choice: 'required',
         parallel_tool_calls: true,
         temperature: 0.0,
-        max_tokens: 4000,
+        max_tokens: 4000
+      }, {
         timeout: 30000 // 30 second timeout
       });
 
@@ -863,7 +865,8 @@ Provide a comprehensive, personalized response based on the FRESH function resul
           { role: 'system', content: systemPrompt },
           { role: 'user', content: 'Please provide a response based on the function results and context.' }
         ],
-        temperature: 0.7,
+        temperature: 0.7
+      }, {
         timeout: 30000 // 30 second timeout
       });
 

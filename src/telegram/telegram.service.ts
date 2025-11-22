@@ -89,7 +89,7 @@ export class TelegramService implements OnModuleInit {
           '4. Поверніться сюди і спробуйте створити подію!\n\n' +
           '💡 Це одноразова настройка - ваші токени будуть збережені.\n\n' +
           '🔒 Ваші дані в безпеці та використовуються тільки для роботи з календарем.',
-          { parse_mode: 'Markdown', disable_web_page_preview: true }
+          { parse_mode: 'Markdown', link_preview_options: { is_disabled: true } }
         );
         console.log(`📧 Auth URL sent to user ${ctx.from?.id}`);
       } catch (error) {
