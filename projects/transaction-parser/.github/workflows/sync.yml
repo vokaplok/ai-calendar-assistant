@@ -1,0 +1,77 @@
+name: Sync Transactions
+
+on:
+  schedule:
+    # Щодня о 9:00 UTC (12:00 Kyiv time in summer, 11:00 in winter)
+    - cron: '0 9 * * *'
+
+  # Дозволити ручний запуск
+  workflow_dispatch:
+    inputs:
+      source:
+        description: 'Source to sync (all/brex/stripe/privatbank)'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - brex
+          - stripe
+          - privatbank
+
+jobs:
+  sync-transactions:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: transaction-parser/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          cd transaction-parser
+          npm ci
+
+      - name: Create credentials directory
+        run: mkdir -p transaction-parser/credentials
+
+      - name: Create Google Service Account credentials
+        run: |
+          echo '${{ secrets.GOOGLE_SERVICE_ACCOUNT }}' > transaction-parser/credentials/service-account.json
+
+      - name: Sync transactions
+        env:
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          BREX_API_KEY: ${{ secrets.BREX_API_KEY }}
+          BREX_COMPANY_ID: ${{ secrets.BREX_COMPANY_ID }}
+          STRIPE_SECRET_KEY: ${{ secrets.STRIPE_SECRET_KEY }}
+          PRIVATBANK_API_TOKEN: ${{ secrets.PRIVATBANK_API_TOKEN }}
+          PRIVATBANK_MERCHANT_ID: ${{ secrets.PRIVATBANK_MERCHANT_ID }}
+          PRIVATBANK_MERCHANT_PASSWORD: ${{ secrets.PRIVATBANK_MERCHANT_PASSWORD }}
+          PRIVATBANK_CARD_NUMBER: ${{ secrets.PRIVATBANK_CARD_NUMBER }}
+          INITIAL_FETCH_DAYS: '30'
+          DEBUG: 'false'
+        run: |
+          cd transaction-parser
+          SOURCE="${{ github.event.inputs.source || 'all' }}"
+          if [ "$SOURCE" = "all" ]; then
+            npm start
+          else
+            npm start $SOURCE
+          fi
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sync-logs-${{ github.run_number }}
+          path: transaction-parser/logs/*.log
+          retention-days: 30
+          if-no-files-found: ignore

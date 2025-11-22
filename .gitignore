@@ -13,6 +13,9 @@ app.log
 /dist
 /build
 
+# static
+/test_files
+
 # Environment variables
 .env
 .env.local

@@ -1,0 +1,31 @@
+{
+  "name": "transaction-parser",
+  "version": "1.0.0",
+  "description": "Multi-API transaction parser for Brex, Stripe, and PrivatBank with Google Sheets integration",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "sync": "node src/index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "brex",
+    "stripe",
+    "privatbank",
+    "google-sheets",
+    "transaction-parser"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "googleapis": "^128.0.0",
+    "stripe": "^14.0.0",
+    "axios": "^1.6.0",
+    "dotenv": "^16.3.1",
+    "date-fns": "^3.0.0"
+  },
+  "devDependencies": {
+    "eslint": "^8.55.0"
+  }
+}

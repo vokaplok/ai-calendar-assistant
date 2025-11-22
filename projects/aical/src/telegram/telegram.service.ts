@@ -1,7 +1,6 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Telegraf } from 'telegraf';
-import { spawn } from 'child_process';
 import { LlmService } from '../llm/llm.service';
 import { CalendarService } from '../calendar/calendar.service';
 import { CalendarOrchestratorService } from '../calendar/calendar-orchestrator.service';
@@ -60,8 +59,7 @@ export class TelegramService implements OnModuleInit {
         '/start - Get started\n' +
         '/help - Show this help message\n' +
         '/auth - Authorize Google Calendar access\n' +
-        '/status - Check calendar connection status\n' +
-        '/transactions - Run manual transaction sync\n\n' +
+        '/status - Check calendar connection status\n\n' +
         '💬 Text commands:\n' +
         'Just type natural language like:\n' +
         '• "create event for 7pm called Tennis"\n' +
@@ -100,25 +98,6 @@ export class TelegramService implements OnModuleInit {
       } catch (error) {
         console.error('Error checking authentication:', error);
         await ctx.reply('❌ Error checking authentication status.');
-      }
-    });
-
-    this.bot.command('transactions', async (ctx) => {
-      try {
-        await ctx.reply('🔄 **Manual Transaction Update**\n\nStarting manual transaction sync...');
-        
-        // Execute transaction sync
-        const result = await this.runTransactionSync();
-        
-        if (result.success) {
-          const summary = this.formatTransactionSummary(result.data);
-          await ctx.reply(`✅ **Transaction sync completed!**\n\n${summary}`, { parse_mode: 'Markdown' });
-        } else {
-          await ctx.reply(`❌ **Transaction sync failed:**\n\n${result.error}`, { parse_mode: 'Markdown' });
-        }
-      } catch (error) {
-        console.error('Error in /transactions command:', error);
-        await ctx.reply('❌ Error during transaction sync. Please check logs.');
       }
     });
 
@@ -414,99 +393,5 @@ export class TelegramService implements OnModuleInit {
     }
 
     return true;
-  }
-
-  private async runTransactionSync(): Promise<{ success: boolean; data?: any; error?: string }> {
-    return new Promise((resolve) => {
-      const transactionParserPath = '/Users/andriikolpakov/Desktop/Generect/generect_code/base/tools/projects_render/projects/transaction-parser';
-      
-      // Run npm start in the transaction-parser directory
-      const process = spawn('npm', ['start'], {
-        cwd: transactionParserPath,
-        stdio: 'pipe'
-      });
-
-      let output = '';
-      let errorOutput = '';
-
-      process.stdout.on('data', (data) => {
-        output += data.toString();
-      });
-
-      process.stderr.on('data', (data) => {
-        errorOutput += data.toString();
-      });
-
-      process.on('close', (code) => {
-        if (code === 0) {
-          resolve({
-            success: true,
-            data: this.parseTransactionOutput(output)
-          });
-        } else {
-          resolve({
-            success: false,
-            error: errorOutput || output || `Process exited with code ${code}`
-          });
-        }
-      });
-
-      process.on('error', (error) => {
-        resolve({
-          success: false,
-          error: error.message
-        });
-      });
-    });
-  }
-
-  private parseTransactionOutput(output: string): any {
-    const lines = output.split('\n');
-    const summary = {
-      sources: [],
-      totalProcessed: 0,
-      newTransactions: 0,
-      errors: []
-    };
-
-    for (const line of lines) {
-      if (line.includes('✅') && line.includes('transactions')) {
-        const match = line.match(/(\d+)/);
-        if (match) {
-          summary.totalProcessed += parseInt(match[1]);
-        }
-      }
-      if (line.includes('new transactions')) {
-        const match = line.match(/(\d+)/);
-        if (match) {
-          summary.newTransactions += parseInt(match[1]);
-        }
-      }
-      if (line.includes('❌') || line.includes('Error')) {
-        summary.errors.push(line.trim());
-      }
-    }
-
-    return summary;
-  }
-
-  private formatTransactionSummary(data: any): string {
-    const { totalProcessed, newTransactions, errors } = data;
-    
-    let summary = `📊 **Sync Results:**\n`;
-    summary += `• Total processed: ${totalProcessed}\n`;
-    summary += `• New transactions: ${newTransactions}\n`;
-    
-    if (errors.length > 0) {
-      summary += `\n⚠️ **Warnings/Errors:**\n`;
-      errors.slice(0, 3).forEach((error: string) => {
-        summary += `• ${error}\n`;
-      });
-      if (errors.length > 3) {
-        summary += `• ... and ${errors.length - 3} more\n`;
-      }
-    }
-
-    return summary;
   }
 }

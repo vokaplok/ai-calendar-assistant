@@ -1,9 +1,11 @@
 services:
+  # AI Calendar Assistant Service
   - type: web
     name: ai-calendar-assistant
     env: node
     region: oregon
     plan: free
+    rootDir: ./projects/aical
     buildCommand: npm install && npm run build
     startCommand: npm run start:prod
     healthCheckPath: /telegram/health
@@ -28,3 +30,27 @@ services:
         value: Asia/Jerusalem
       - key: GOOGLE_CALENDAR_DEFAULT_ID
         value: primary
+
+  # Site Monitor Service  
+  - type: web
+    name: site-monitor
+    env: node
+    region: oregon
+    plan: free
+    rootDir: ./projects/site-monitor
+    buildCommand: npm install && npm run build
+    startCommand: npm run start:prod
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3003
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: MONITOR_URL
+        sync: false
+      - key: CHECK_INTERVAL_MS
+        value: "300000"
