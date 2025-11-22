@@ -65,3 +65,6 @@ docs
 # Temporary files
 tmp
 temp
+
+# Separate projects (not part of main app)
+projects
