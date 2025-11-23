@@ -27,12 +27,27 @@ export class GoogleSheetClient {
   async initialize(): Promise<void> {
     console.log('🔗 Connecting to Google Sheets...');
     
-    // Use service account or OAuth credentials
-    const auth = new google.auth.GoogleAuth({
-      keyFile: this.config.get<string>('GOOGLE_SERVICE_ACCOUNT_KEY_FILE'),
+    // Use service account credentials - support both file and JSON env variable
+    const keyFile = this.config.get<string>('GOOGLE_SERVICE_ACCOUNT_KEY_FILE');
+    const keyJson = this.config.get<string>('GOOGLE_SERVICE_ACCOUNT_JSON');
+    
+    let authConfig: any = {
       scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-    });
-
+    };
+    
+    if (keyJson) {
+      // Use JSON credentials from environment variable (for production)
+      console.log('🔑 Using Google credentials from environment variable');
+      authConfig.credentials = JSON.parse(keyJson);
+    } else if (keyFile) {
+      // Use key file (for local development)
+      console.log('🔑 Using Google credentials from file:', keyFile);
+      authConfig.keyFile = keyFile;
+    } else {
+      throw new Error('No Google service account credentials found. Please set GOOGLE_SERVICE_ACCOUNT_JSON or GOOGLE_SERVICE_ACCOUNT_KEY_FILE');
+    }
+    
+    const auth = new google.auth.GoogleAuth(authConfig);
     this.sheets = google.sheets({ version: 'v4', auth });
     
     console.log('✅ Google Sheets connected');
