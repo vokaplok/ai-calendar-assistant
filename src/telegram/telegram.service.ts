@@ -159,7 +159,29 @@ export class TelegramService implements OnModuleInit {
         const result = await this.runTransactionSync();
         
         if (result.success) {
-          const summary = `📊 **Sync Results:**\n• Total processed: ${result.data.totalProcessed}\n• New transactions: ${result.data.newTransactions}\n${result.data.errors.length > 0 ? `\n⚠️ **Errors:** ${result.data.errors.length}` : ''}`;
+          let summary = `📊 **Sync Results:**\n• Total processed: ${result.data.totalProcessed}\n• New transactions: ${result.data.newTransactions}`;
+          
+          // Add detailed breakdown by source
+          if (result.data.details && result.data.details.length > 0) {
+            summary += '\n\n📋 **Details by source:**';
+            result.data.details.forEach(detail => {
+              summary += `\n• ${detail.source}: ${detail.new} new, ${detail.total} total`;
+              if (detail.latestDate) {
+                summary += ` (latest: ${detail.latestDate})`;
+              }
+            });
+          }
+          
+          if (result.data.errors.length > 0) {
+            summary += `\n\n⚠️ **Errors:** ${result.data.errors.length}`;
+            result.data.errors.slice(0, 3).forEach(error => {
+              summary += `\n• ${error}`;
+            });
+            if (result.data.errors.length > 3) {
+              summary += `\n• ... and ${result.data.errors.length - 3} more`;
+            }
+          }
+          
           await ctx.reply(`✅ **Transaction sync completed!**\n\n${summary}`, { parse_mode: 'Markdown' });
         } else {
           await ctx.reply(`❌ **Transaction sync failed:**\n\n${result.error}`, { parse_mode: 'Markdown' });
@@ -538,6 +560,17 @@ export class TelegramService implements OnModuleInit {
       // Format results for the summary
       const summary = this.transactionSyncService.printSummary(results);
       
+      // Add detailed information for debugging
+      const details = results.map(r => ({
+        source: r.source,
+        new: r.new,
+        total: r.total,
+        latestDate: r.latestDate || null,
+        errors: r.errors || []
+      }));
+      
+      console.log('📊 Detailed sync results:', details);
+      
       return {
         success: true,
         data: {
@@ -545,6 +578,7 @@ export class TelegramService implements OnModuleInit {
           totalProcessed: results.reduce((sum, r) => sum + r.total, 0),
           newTransactions: results.reduce((sum, r) => sum + r.new, 0),
           errors: results.filter(r => r.errors && r.errors.length > 0).flatMap(r => r.errors),
+          details: details,
           summary
         }
       };

@@ -11,6 +11,7 @@ export interface SyncResult {
   source: string;
   new: number;
   total: number;
+  latestDate?: string;
   errors?: string[];
 }
 
@@ -117,7 +118,7 @@ export class TransactionSyncService {
 
     if (!allTransactions || allTransactions.length === 0) {
       console.log(`ℹ️  No transactions found in ${sourceName}`);
-      return { source: sourceName, new: 0, total: 0 };
+      return { source: sourceName, new: 0, total: 0, latestDate: null };
     }
 
     console.log(`📥 Found ${allTransactions.length} transactions from ${sourceName} API`);
@@ -139,9 +140,11 @@ export class TransactionSyncService {
 
     // Step 3: Get latest transaction info from Google Sheet
     let newTransactions: Transaction[];
+    let latestDateInfo: Date | null = null;
     if (sheetName === 'Auto_input.Brex') {
       // For Brex, find latest date in table and add transactions from that date onwards
       const { latestDate, existingFromLatestDate } = await this.sheetClient.getLatestTransactionInfo(sheetName);
+      latestDateInfo = latestDate;
 
       newTransactions = allTransactions.filter(t => {
         const transactionDate = new Date(t.date);
@@ -208,7 +211,7 @@ export class TransactionSyncService {
 
     if (newTransactions.length === 0) {
       console.log(`✅ All ${allTransactions.length} transactions already exist in sheet - no updates needed`);
-      return { source: sourceName, new: 0, total: allTransactions.length };
+      return { source: sourceName, new: 0, total: allTransactions.length, latestDate: latestDateInfo?.toLocaleDateString() || null };
     }
 
     console.log(`➕ Found ${newTransactions.length} new transactions to add`);
@@ -229,7 +232,8 @@ export class TransactionSyncService {
     return {
       source: sourceName,
       new: addedCount,
-      total: allTransactions.length
+      total: allTransactions.length,
+      latestDate: latestDateInfo?.toLocaleDateString() || null
     };
   }
 
