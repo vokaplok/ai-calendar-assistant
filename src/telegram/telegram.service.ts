@@ -65,7 +65,8 @@ export class TelegramService implements OnModuleInit {
         '/help - Show this help message\n' +
         '/auth - Authorize Google Calendar access\n' +
         '/status - Check calendar connection status\n' +
-        '/transactions - Run manual transaction sync\n\n' +
+        '/transactions - Run manual transaction sync\n' +
+        '/debug_dates - Debug date parsing in Google Sheets\n\n' +
         '💬 Text commands:\n' +
         'Just type natural language like:\n' +
         '• "create event for 7pm called Tennis"\n' +
@@ -148,6 +149,38 @@ export class TelegramService implements OnModuleInit {
           '🔧 Перевірте логи або спробуйте /auth для повторного підключення.',
           { parse_mode: 'Markdown' }
         );
+      }
+    });
+
+    this.bot.command('debug_dates', async (ctx) => {
+      try {
+        await ctx.reply('🔍 **Debug: Checking date parsing**\n\nAnalyzing latest dates in Google Sheets...');
+        
+        // Get latest date info from Google Sheets for both sources
+        await this.transactionSyncService.initialize();
+        
+        // Check Brex latest date
+        const brexLatestInfo = await this.transactionSyncService['sheetClient'].getLatestTransactionInfo('Auto_input.Brex');
+        const stripeLatestInfo = await this.transactionSyncService['sheetClient'].getLatestTransactionInfo('Auto_input.Stripe');
+        
+        let debugInfo = '📋 **Latest dates from Google Sheets:**\n\n';
+        
+        debugInfo += `🟦 **Brex (Auto_input.Brex):**\n`;
+        debugInfo += `• Latest date: ${brexLatestInfo.latestDate ? brexLatestInfo.latestDate.toLocaleDateString() : 'none'}\n`;
+        debugInfo += `• ISO format: ${brexLatestInfo.latestDate ? brexLatestInfo.latestDate.toISOString().split('T')[0] : 'none'}\n`;
+        debugInfo += `• Transactions on latest date: ${brexLatestInfo.existingFromLatestDate.length}\n\n`;
+        
+        debugInfo += `🟩 **Stripe (Auto_input.Stripe):**\n`;
+        debugInfo += `• Latest date: ${stripeLatestInfo.latestDate ? stripeLatestInfo.latestDate.toLocaleDateString() : 'none'}\n`;
+        debugInfo += `• ISO format: ${stripeLatestInfo.latestDate ? stripeLatestInfo.latestDate.toISOString().split('T')[0] : 'none'}\n`;
+        debugInfo += `• Transactions on latest date: ${stripeLatestInfo.existingFromLatestDate.length}\n\n`;
+        
+        debugInfo += `🕐 **Current time:** ${new Date().toISOString()}`;
+        
+        await ctx.reply(debugInfo, { parse_mode: 'Markdown' });
+      } catch (error) {
+        console.error('Error in /debug_dates command:', error);
+        await ctx.reply(`❌ Debug failed: ${error.message}`);
       }
     });
 
