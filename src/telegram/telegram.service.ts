@@ -159,20 +159,60 @@ export class TelegramService implements OnModuleInit {
         // Get latest date info from Google Sheets for both sources
         await this.transactionSyncService.initialize();
         
+        // First, check basic Google Sheets connection
+        const sheetClient = this.transactionSyncService['sheetClient'];
+        
+        let debugInfo = '🔗 **Google Sheets Connection:**\n';
+        debugInfo += `• Spreadsheet ID: ${sheetClient['spreadsheetId'] ? 'configured' : 'missing'}\n`;
+        debugInfo += `• Sheets client: ${sheetClient['sheets'] ? 'initialized' : 'not initialized'}\n\n`;
+        
+        // Check what sheets exist
+        try {
+          const sheetsInfo = await sheetClient['sheets'].spreadsheets.get({
+            spreadsheetId: sheetClient['spreadsheetId']
+          });
+          
+          debugInfo += '📋 **Available sheets:**\n';
+          sheetsInfo.data.sheets?.forEach(sheet => {
+            debugInfo += `• ${sheet.properties?.title}\n`;
+          });
+          debugInfo += '\n';
+        } catch (error) {
+          debugInfo += `❌ Failed to get sheets list: ${error.message}\n\n`;
+        }
+        
+        // Check raw data from sheets
+        for (const sheetName of ['Auto_input.Brex', 'Auto_input.Stripe']) {
+          debugInfo += `🔍 **Checking ${sheetName}:**\n`;
+          try {
+            const response = await sheetClient['sheets'].spreadsheets.values.get({
+              spreadsheetId: sheetClient['spreadsheetId'],
+              range: `${sheetName}!A1:C5`, // Just first 5 rows
+            });
+            const values = response.data.values || [];
+            debugInfo += `• Total rows retrieved: ${values.length}\n`;
+            if (values.length > 0) {
+              debugInfo += `• Header: [${values[0]?.join(', ') || 'empty'}]\n`;
+              if (values.length > 1) {
+                debugInfo += `• First data row: [${values[1]?.join(', ') || 'empty'}]\n`;
+              }
+            }
+          } catch (error) {
+            debugInfo += `• ❌ Error: ${error.message}\n`;
+          }
+          debugInfo += '\n';
+        }
+        
         // Check Brex latest date
-        const brexLatestInfo = await this.transactionSyncService['sheetClient'].getLatestTransactionInfo('Auto_input.Brex');
-        const stripeLatestInfo = await this.transactionSyncService['sheetClient'].getLatestTransactionInfo('Auto_input.Stripe');
+        const brexLatestInfo = await sheetClient.getLatestTransactionInfo('Auto_input.Brex');
+        const stripeLatestInfo = await sheetClient.getLatestTransactionInfo('Auto_input.Stripe');
         
-        let debugInfo = '📋 **Latest dates from Google Sheets:**\n\n';
-        
-        debugInfo += `🟦 **Brex (Auto_input.Brex):**\n`;
+        debugInfo += `🟦 **Brex parsing result:**\n`;
         debugInfo += `• Latest date: ${brexLatestInfo.latestDate ? brexLatestInfo.latestDate.toLocaleDateString() : 'none'}\n`;
-        debugInfo += `• ISO format: ${brexLatestInfo.latestDate ? brexLatestInfo.latestDate.toISOString().split('T')[0] : 'none'}\n`;
         debugInfo += `• Transactions on latest date: ${brexLatestInfo.existingFromLatestDate.length}\n\n`;
         
-        debugInfo += `🟩 **Stripe (Auto_input.Stripe):**\n`;
+        debugInfo += `🟩 **Stripe parsing result:**\n`;
         debugInfo += `• Latest date: ${stripeLatestInfo.latestDate ? stripeLatestInfo.latestDate.toLocaleDateString() : 'none'}\n`;
-        debugInfo += `• ISO format: ${stripeLatestInfo.latestDate ? stripeLatestInfo.latestDate.toISOString().split('T')[0] : 'none'}\n`;
         debugInfo += `• Transactions on latest date: ${stripeLatestInfo.existingFromLatestDate.length}\n\n`;
         
         debugInfo += `🕐 **Current time:** ${new Date().toISOString()}`;
