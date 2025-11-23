@@ -5,6 +5,7 @@ import { ConfigService } from '@nestjs/config';
 import { GoogleSheetClient } from './google-sheet.client';
 import { BrexParser } from './parsers/brex.parser';
 import { StripeParser } from './parsers/stripe.parser';
+import { Transaction } from './parsers/base.parser';
 
 export interface SyncResult {
   source: string;
@@ -120,16 +121,84 @@ export class TransactionSyncService {
     }
 
     console.log(`📥 Found ${allTransactions.length} transactions from ${sourceName} API`);
+    
+    // Log transaction breakdown
+    if (sourceName === 'brex') {
+      const cardTxns = allTransactions.filter(t => t.brexData?.type === 'card').length;
+      const transferTxns = allTransactions.filter(t => t.brexData?.type === 'transfer' || t.brexData?.type === 'cash').length;
+      console.log(`   📊 Breakdown: ${cardTxns} card, ${transferTxns} transfer/cash`);
+    }
 
     // Step 2: Check that the target sheet exists
     console.log(`🔍 Using existing ${sheetName} sheet...`);
 
-    // Step 3: Get existing transaction IDs from Google Sheet
-    const existingIds = await this.sheetClient.getExistingIds(sheetName);
-    console.log(`📋 Found ${existingIds.size} existing transactions in sheet`);
+    // Helper function for amount formatting
+    const formatAmountWithCommas = (amount: number): string => {
+      return amount.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    };
 
-    // Step 4: Filter out transactions that already exist
-    const newTransactions = allTransactions.filter(t => !existingIds.has(t.id));
+    // Step 3: Get latest transaction info from Google Sheet
+    let newTransactions: Transaction[];
+    if (sheetName === 'Auto_input.Brex') {
+      // For Brex, find latest date in table and add transactions from that date onwards
+      const { latestDate, existingFromLatestDate } = await this.sheetClient.getLatestTransactionInfo(sheetName);
+
+      newTransactions = allTransactions.filter(t => {
+        const transactionDate = new Date(t.date);
+        
+        // If no latest date found in table, add all transactions
+        if (!latestDate) {
+          return true;
+        }
+        
+        // Only consider transactions from latest date onwards
+        if (transactionDate < latestDate) {
+          return false;
+        }
+        
+        // For transactions on the same date as latest date, check for duplicates
+        if (transactionDate.toDateString() === latestDate.toDateString()) {
+          // Format transaction data for comparison
+          const day = String(transactionDate.getDate()).padStart(2, '0');
+          const month = String(transactionDate.getMonth() + 1).padStart(2, '0');
+          const year = String(transactionDate.getFullYear()).slice(-2);
+          const formattedDate = `${day}/${month}/${year}`;
+          
+          const amountSign = t.type === 'income' ? '' : '-';
+          const amountValue = amountSign + formatAmountWithCommas(t.amount);
+          
+          // For Card transactions: use originalDescription as To/From if available, otherwise use description
+          // For other transactions: use memo as To/From if available, otherwise use description
+          let toFrom;
+          if (t.account === 'Brex Card') {
+            toFrom = t.brexData?.originalDescription || t.description || 'GENERECT, INC.';
+          } else if (t.memo) {
+            toFrom = t.memo; // For non-card transactions, use memo if available
+          } else {
+            toFrom = t.description || 'GENERECT, INC.';
+          }
+          
+          // Check if this exact transaction already exists on the same date
+          const isDuplicate = existingFromLatestDate.some(existing => {
+            return existing.date === formattedDate && 
+                   existing.amount === amountValue && 
+                   existing.description === toFrom;
+          });
+          
+          if (isDuplicate) {
+            console.log(`⚠️ Duplicate transaction found on latest date: ${formattedDate} - ${toFrom} - ${amountValue}`);
+            return false;
+          }
+        }
+        
+        return true;
+      });
+    } else {
+      // For Stripe, use transaction ID (legacy method)
+      const existingIds = await this.sheetClient.getExistingIds(sheetName);
+      console.log(`📋 Found ${existingIds.size} existing transactions in sheet`);
+      newTransactions = allTransactions.filter(t => !existingIds.has(t.id));
+    }
 
     if (newTransactions.length === 0) {
       console.log(`✅ All ${allTransactions.length} transactions already exist in sheet - no updates needed`);
@@ -137,6 +206,14 @@ export class TransactionSyncService {
     }
 
     console.log(`➕ Found ${newTransactions.length} new transactions to add`);
+
+    // Sort new transactions by date (oldest first)
+    newTransactions.sort((a, b) => {
+      const dateA = new Date(a.date);
+      const dateB = new Date(b.date);
+      return dateA.getTime() - dateB.getTime();
+    });
+    console.log(`📅 Sorted transactions by date (oldest to newest)`);
 
     // Step 5: Add new transactions to Google Sheet
     const addedCount = await this.sheetClient.addTransactions(sheetName, newTransactions);
@@ -153,6 +230,12 @@ export class TransactionSyncService {
   /**
    * Print summary of sync results
    */
+  async debugBrexTransactions(): Promise<any> {
+    const brexTransactions = await this.parsers.brex.fetchTransactions();
+    // Return first 2 transactions for debugging
+    return brexTransactions.slice(0, 2);
+  }
+
   printSummary(results: SyncResult[]): string {
     let summary = '\n' + '='.repeat(80) + '\n';
     summary += '📋 SYNC SUMMARY\n';

@@ -2,7 +2,7 @@ import { ConfigService } from '@nestjs/config';
 
 export interface Transaction {
   id: string;
-  date: string;
+  date: Date | string; // Support both Date object and string
   amount: number;
   currency: string;
   description: string;
@@ -10,6 +10,10 @@ export interface Transaction {
   category?: string;
   account?: string;
   reference?: string;
+  memo?: string; // For Brex memo field
+  paymentMethod?: string; // For Brex payment method (ACH/Wire/Card/Bill Pay)
+  initiatedBy?: string; // Who initiated the transaction (Brex/Client)
+  status?: string; // Transaction status
   stripeData?: {
     fee: string;
     status: string;
@@ -18,6 +22,13 @@ export interface Transaction {
     customerEmail: string;
     invoiceId: string;
     captured: string;
+  };
+  brexData?: {
+    originalId?: string;
+    type?: string;
+    paymentType?: string;
+    merchantName?: string;
+    originalDescription?: string;
   };
 }
 

@@ -10,6 +10,7 @@ export class StripeParser extends BaseParser {
   constructor(config: ConfigService) {
     super(config);
     const apiKey = this.config.get<string>('STRIPE_SECRET_KEY');
+    console.log(`🔑 Stripe API Key configured: ${apiKey ? 'YES' : 'NO'}`);
     if (apiKey) {
       this.stripe = new Stripe(apiKey, { apiVersion: '2023-10-16' });
     }
@@ -23,6 +24,22 @@ export class StripeParser extends BaseParser {
   }
 
   /**
+   * Clean Stripe-specific description patterns
+   */
+  private cleanStripeDescription(description: string): string {
+    if (!description) return '';
+    
+    // Remove Stripe-specific unwanted patterns
+    let cleaned = description.trim()
+      .replace(/Payment\s*[–-]\s*Thank\s*you!/gi, '') // Remove "Payment – Thank you!"
+      .replace(/\s+/g, ' ') // Normalize spaces
+      .trim();
+    
+    // If after cleaning we have empty string, return fallback
+    return cleaned || 'Stripe Payment';
+  }
+
+  /**
    * Test Stripe API connection
    */
   async testConnection(): Promise<boolean> {
@@ -32,8 +49,9 @@ export class StripeParser extends BaseParser {
         return false;
       }
 
-      const account = await this.stripe.accounts.retrieve();
-      console.log(`✅ Stripe: Connected to account ${account.id}`);
+      // Try charges endpoint instead of account (requires less permissions)
+      const charges = await this.stripe.charges.list({ limit: 1 });
+      console.log(`✅ Stripe: Connected, found ${charges.data.length} recent charges`);
       return true;
     } catch (error) {
       console.log(`❌ Stripe: ${error.message}`);
@@ -62,10 +80,10 @@ export class StripeParser extends BaseParser {
     for (const charge of charges.data) {
       transactions.push({
         id: charge.id,
-        date: this.formatDateWithTime(new Date(charge.created * 1000)),
+        date: new Date(charge.created * 1000), // Return Date object instead of formatted string
         amount: this.formatAmount(charge.amount, charge.currency.toUpperCase()),
         currency: charge.currency.toUpperCase(),
-        description: this.cleanDescription(charge.description || 'Subscription creation'),
+        description: this.cleanStripeDescription(charge.description || 'Subscription creation'),
         type: 'income', // Stripe charges are typically income
         category: 'Payment Processing',
         account: 'Stripe',
