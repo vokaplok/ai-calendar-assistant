@@ -153,7 +153,11 @@ export class TransactionSyncService {
         
         // Only add transactions that are newer than the latest date in the table
         // OR on the same date (but not duplicates)
-        if (transactionDate < latestDate) {
+        // Compare dates only (not time) to avoid timezone issues
+        const transactionDateOnly = new Date(transactionDate.getFullYear(), transactionDate.getMonth(), transactionDate.getDate());
+        const latestDateOnly = new Date(latestDate.getFullYear(), latestDate.getMonth(), latestDate.getDate());
+        
+        if (transactionDateOnly < latestDateOnly) {
           console.log(`⏭️ Skipping old transaction from ${transactionDate.toLocaleDateString()}: ${t.id}`);
           return false;
         }
