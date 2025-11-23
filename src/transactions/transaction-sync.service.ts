@@ -151,8 +151,10 @@ export class TransactionSyncService {
           return true;
         }
         
-        // Only consider transactions from latest date onwards
+        // Only add transactions that are newer than the latest date in the table
+        // OR on the same date (but not duplicates)
         if (transactionDate < latestDate) {
+          console.log(`⏭️ Skipping old transaction from ${transactionDate.toLocaleDateString()}: ${t.id}`);
           return false;
         }
         

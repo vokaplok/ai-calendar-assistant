@@ -11,6 +11,7 @@ export interface Transaction {
   account?: string;
   reference?: string;
   memo?: string; // For Brex memo field
+  externalMemo?: string; // For Brex external_memo field (client-initiated transactions)
   paymentMethod?: string; // For Brex payment method (ACH/Wire/Card/Bill Pay)
   initiatedBy?: string; // Who initiated the transaction (Brex/Client)
   status?: string; // Transaction status

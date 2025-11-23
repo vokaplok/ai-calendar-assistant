@@ -35,17 +35,27 @@ export class BrexParser extends BaseParser {
         return false;
       }
 
-      const response = await axios.get(`${this.baseUrl}/v2/accounts`, {
+      console.log('🔗 Testing Brex API with card transactions endpoint');
+
+      // Test the card transactions endpoint that we know works
+      const response = await axios.get(`${this.baseUrl}/v2/transactions/card/primary`, {
         headers: {
           'Authorization': `Bearer ${this.apiKey}`,
+        },
+        params: {
+          limit: 1, // Just fetch 1 transaction to test
         },
         timeout: 10000
       });
 
-      console.log(`✅ Brex: Connected, found ${response.data.items?.length || 0} accounts`);
+      const transactionCount = response.data.items?.length || 0;
+      console.log(`✅ Brex: Connected successfully, found ${transactionCount} recent card transaction(s)`);
       return true;
     } catch (error) {
-      console.log(`❌ Brex: ${error.response?.data?.message || error.message || 'Connection failed'}`);
+      console.log(`❌ Brex: ${error.response?.status} - ${error.response?.data?.message || error.message || 'Connection failed'}`);
+      if (error.response?.data) {
+        console.log('Response data:', JSON.stringify(error.response.data, null, 2));
+      }
       return false;
     }
   }
@@ -55,7 +65,7 @@ export class BrexParser extends BaseParser {
       throw new Error('Brex API key not configured');
     }
 
-    console.log('📡 Fetching last 100 transactions from Brex...');
+    console.log('📡 Fetching transactions from Brex...');
     
     const allTransactions: Transaction[] = [];
     
@@ -125,8 +135,20 @@ export class BrexParser extends BaseParser {
               amount = Math.abs(tx.amount?.amount ? tx.amount.amount / 100 : 0);
               // For transfers, negative amount typically means income (money coming in)
               isExpense = (tx.amount?.amount || 0) > 0;
-              description = tx.display_name || tx.description || 'Transfer';
-              memo = tx.external_memo || tx.memo || '';
+              
+              // Different logic for client-initiated vs system-initiated transfers
+              const isClientInitiated = tx.initiator_type === 'USER' || tx.creator_user_id;
+              
+              if (isClientInitiated) {
+                // For client-initiated: To/From = recipient, memo = null, externalMemo = external_memo
+                description = tx.display_name || tx.description || 'Transfer';
+                memo = ''; // Keep memo empty for client-initiated
+              } else {
+                // For system-initiated: keep current logic
+                description = tx.display_name || tx.description || 'Transfer';
+                memo = tx.external_memo || tx.memo || '';
+              }
+              
               paymentMethod = tx.payment_type === 'ACH' ? 'ACH' : 
                              tx.payment_type === 'WIRE' ? 'Wire' : 
                              tx.payment_type === 'INTERNATIONAL_WIRE' ? 'Wire' : 
@@ -161,6 +183,7 @@ export class BrexParser extends BaseParser {
               account: 'Brex',
               reference: tx.id || '',
               memo: memo,
+              externalMemo: tx.external_memo || '',
               initiatedBy: tx.initiator_type === 'USER' || tx.creator_user_id ? 'Client' : 'Brex',
               paymentMethod: paymentMethod,
               status: tx.status || 'Finalized',
@@ -251,7 +274,8 @@ export class BrexParser extends BaseParser {
           account: 'Brex Card',
           reference: tx.id || '',
           memo: tx.external_memo || tx.memo || '',
-          initiatedBy: 'Client',
+          externalMemo: tx.external_memo || '',
+          initiatedBy: 'Brex',
           paymentMethod: 'Card',
           status: tx.status || 'Finalized',
           brexData: {

@@ -124,10 +124,19 @@ export class GoogleSheetClient {
           if (values[i] && values[i][0] && values[i][1] && values[i][2]) {
             const dateStr = values[i][0]?.trim() || '';
             
-            // Parse dd/mm/yy format to Date object
+            // Parse dd/MM/yy format to Date object (European format)
             const [day, month, year] = dateStr.split('/').map(num => parseInt(num, 10));
-            if (day && month && year) {
-              const fullYear = year < 50 ? 2000 + year : 1900 + year; // Handle 2-digit year
+            if (day && month && year && month <= 12 && day <= 31) {
+              // For 2-digit years, assume they're between 2020-2030
+              let fullYear = year;
+              if (year < 100) {
+                fullYear = year < 50 ? 2000 + year : 1900 + year;
+              }
+              // Sanity check: keep years reasonable (2020-2030 range)
+              if (fullYear < 2020 || fullYear > 2030) {
+                console.log(`⚠️ Skipping date with unreasonable year: ${dateStr} (parsed as ${fullYear})`);
+                continue;
+              }
               const actualDate = new Date(fullYear, month - 1, day); // month is 0-based
               
               if (!isNaN(actualDate.getTime())) {
@@ -317,30 +326,36 @@ export class GoogleSheetClient {
           const amountSign = t.type === 'income' ? '' : '-';
           const amountValue = amountSign + this.formatAmountWithCommas(t.amount);
           
-          // For Card transactions: use originalDescription as To/From if available, otherwise use description
-          // For other transactions: use memo as To/From if available, otherwise use description
+          // To/From logic based on account type and transaction type
           let toFrom;
-          if (t.account === 'Brex Card') {
-            toFrom = t.brexData?.originalDescription || t.description || 'GENERECT, INC.';
-          } else if (t.memo) {
-            toFrom = t.memo; // For non-card transactions, use memo if available
-          } else {
-            toFrom = t.description || 'GENERECT, INC.';
-          }
+          let memoField;
           
-          // For Card transactions: show originalDescription in memo if available
-          // For other transactions: show memo if exists
-          const memoField = t.account === 'Brex Card' ? 
-                           (t.brexData?.originalDescription || '') : 
-                           (t.memo || '');
+          if (t.account === 'Brex Card') {
+            // Card transactions: use originalDescription or description
+            toFrom = t.brexData?.originalDescription || t.description || 'GENERECT, INC.';
+            // Card transactions: memo = description
+            memoField = t.description || '';
+          } else {
+            // Transfer transactions: always use description (which contains display_name)
+            toFrom = t.description || 'GENERECT, INC.';
+            
+            // Memo field logic for transfers
+            if (t.type === 'income') {
+              // Income transfers: empty memo
+              memoField = '';
+            } else {
+              // Expense transfers: use memo/external_memo
+              memoField = t.memo || '';
+            }
+          }
           
           // Determine if transaction is finalized
           const isFinalized = !t.status || t.status === 'Finalized' || 
                              t.status === 'SETTLED' || t.status === 'COMPLETED' || 
                              t.status === 'PROCESSED';
           
-          // External Memo is empty for card transactions now (moved to Memo column)
-          const externalMemo = '';
+          // External Memo from transaction data (important for client-initiated transfers)
+          const externalMemo = t.externalMemo || '';
 
           return [
             formattedDate,                                              // A: Date (dd/mm/yy)
