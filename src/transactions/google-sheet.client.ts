@@ -339,7 +339,7 @@ export class GoogleSheetClient {
           
           // Format amount with proper sign and thousand separators
           const amountSign = t.type === 'income' ? '' : '-';
-          const amountValue = amountSign + this.formatAmountWithCommas(t.amount);
+          const amountValue = amountSign + '$' + this.formatAmountWithCommas(t.amount);
           
           // To/From logic based on account type and transaction type
           let toFrom;
