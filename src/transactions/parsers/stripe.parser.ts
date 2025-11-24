@@ -60,6 +60,23 @@ export class StripeParser extends BaseParser {
   }
 
   /**
+   * Get customer email from customer ID
+   */
+  private async getCustomerEmail(customerId: string): Promise<string> {
+    try {
+      if (!customerId) {
+        return 'api_parser@generect.com';
+      }
+      
+      const customer = await this.stripe.customers.retrieve(customerId);
+      return (customer as any).email || 'api_parser@generect.com';
+    } catch (error) {
+      console.log(`⚠️ Could not fetch customer ${customerId}: ${error.message}`);
+      return 'api_parser@generect.com';
+    }
+  }
+
+  /**
    * Fetch transactions from Stripe
    */
   async fetchTransactions(): Promise<Transaction[]> {
@@ -78,6 +95,17 @@ export class StripeParser extends BaseParser {
     const transactions: Transaction[] = [];
 
     for (const charge of charges.data) {
+      // Get customer email - try billing details first, then customer API
+      let customerEmail = charge.billing_details?.email || '';
+      const customerId = typeof charge.customer === 'string' ? charge.customer : '';
+      
+      // If no email in billing details and we have customer ID, fetch from customer
+      if (!customerEmail && customerId) {
+        customerEmail = await this.getCustomerEmail(customerId);
+      } else if (!customerEmail) {
+        customerEmail = 'api_parser@generect.com';
+      }
+
       transactions.push({
         id: charge.id,
         date: new Date(charge.created * 1000), // Return Date object instead of formatted string
@@ -93,8 +121,8 @@ export class StripeParser extends BaseParser {
           fee: charge.application_fee_amount ? (charge.application_fee_amount / 100).toFixed(2) : '0.33',
           status: charge.status === 'succeeded' ? 'Paid' : charge.status,
           cardId: charge.payment_method || '',
-          customerId: typeof charge.customer === 'string' ? charge.customer : '',
-          customerEmail: charge.billing_details?.email || 'api_parser@generect.com',
+          customerId: customerId,
+          customerEmail: customerEmail,
           invoiceId: typeof charge.invoice === 'string' ? charge.invoice : '',
           captured: charge.captured ? 'TRUE' : 'FALSE'
         }
