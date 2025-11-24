@@ -34,6 +34,9 @@ export class TelegramService implements OnModuleInit {
 
     // Start periodic health check (every 5 minutes)
     this.startHealthCheck();
+
+    // Start daily transaction sync at 9 AM
+    this.startDailyTransactionSync();
   }
   
   private async launchBotAsync() {
@@ -695,5 +698,84 @@ export class TelegramService implements OnModuleInit {
     }, 5 * 60 * 1000); // Every 5 minutes
 
     console.log('🏥 Health check monitoring started (checking every 5 minutes)');
+  }
+
+  private startDailyTransactionSync(): void {
+    // Calculate time until next 9 AM
+    const now = new Date();
+    const next9AM = new Date();
+    next9AM.setHours(9, 0, 0, 0);
+    
+    // If it's already past 9 AM today, schedule for tomorrow
+    if (now.getTime() > next9AM.getTime()) {
+      next9AM.setDate(next9AM.getDate() + 1);
+    }
+    
+    const timeUntil9AM = next9AM.getTime() - now.getTime();
+    
+    console.log(`🕘 Daily transaction sync scheduled for: ${next9AM.toLocaleString()}`);
+    
+    // Set initial timeout for the first run
+    setTimeout(() => {
+      // Run immediately at 9 AM
+      this.runDailyTransactionSync();
+      
+      // Then run every 24 hours
+      setInterval(() => {
+        this.runDailyTransactionSync();
+      }, 24 * 60 * 60 * 1000); // 24 hours
+    }, timeUntil9AM);
+  }
+
+  private async runDailyTransactionSync(): Promise<void> {
+    try {
+      console.log('🌅 [Daily Sync] Starting automatic transaction sync at 9 AM...');
+      
+      const result = await this.runTransactionSync();
+      
+      if (result.success) {
+        console.log('✅ [Daily Sync] Transaction sync completed successfully');
+        console.log(`   📊 Total processed: ${result.data.totalProcessed}`);
+        console.log(`   🆕 New transactions: ${result.data.newTransactions}`);
+        
+        // Optional: Send notification to admin chat if configured
+        const adminChatId = this.configService.get<string>('TELEGRAM_ADMIN_CHAT_ID');
+        if (adminChatId && result.data.newTransactions > 0) {
+          try {
+            let summary = `🌅 **Daily Transaction Sync**\n\n`;
+            summary += `📊 **Results:**\n• New transactions: ${result.data.newTransactions}\n• Total processed: ${result.data.totalProcessed}`;
+            
+            if (result.data.details && result.data.details.length > 0) {
+              summary += '\n\n📋 **Details:**';
+              result.data.details.forEach(detail => {
+                summary += `\n• ${detail.source}: ${detail.new} new`;
+              });
+            }
+            
+            await this.bot.telegram.sendMessage(adminChatId, summary, { parse_mode: 'Markdown' });
+          } catch (notifyError) {
+            console.warn('⚠️ [Daily Sync] Failed to send notification:', notifyError.message);
+          }
+        }
+      } else {
+        console.error('❌ [Daily Sync] Transaction sync failed:', result.error);
+        
+        // Optional: Send error notification to admin
+        const adminChatId = this.configService.get<string>('TELEGRAM_ADMIN_CHAT_ID');
+        if (adminChatId) {
+          try {
+            await this.bot.telegram.sendMessage(
+              adminChatId, 
+              `❌ **Daily Sync Failed**\n\n**Error:** ${result.error}`,
+              { parse_mode: 'Markdown' }
+            );
+          } catch (notifyError) {
+            console.warn('⚠️ [Daily Sync] Failed to send error notification:', notifyError.message);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('💥 [Daily Sync] Unexpected error during daily sync:', error);
+    }
   }
 }

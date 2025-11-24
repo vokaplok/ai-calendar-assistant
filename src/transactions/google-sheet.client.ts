@@ -337,9 +337,9 @@ export class GoogleSheetClient {
           const year = String(dateObj.getFullYear()).slice(-2);
           const formattedDate = `${day}/${month}/${year}`;
           
-          // Format amount with proper sign and thousand separators
+          // Format amount with proper sign and thousand separators (no dollar sign)
           const amountSign = t.type === 'income' ? '' : '-';
-          const amountValue = amountSign + '$' + this.formatAmountWithCommas(t.amount);
+          const amountValue = amountSign + this.formatAmountWithCommas(t.amount);
           
           // To/From logic based on account type and transaction type
           let toFrom;

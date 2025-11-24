@@ -174,7 +174,7 @@ export class TransactionSyncService {
           const formattedDate = `${day}/${month}/${year}`;
           
           const amountSign = t.type === 'income' ? '' : '-';
-          const amountValue = amountSign + '$' + formatAmountWithCommas(t.amount);
+          const amountValue = amountSign + formatAmountWithCommas(t.amount);
           
           // For Card transactions: use originalDescription as To/From if available, otherwise use description
           // For other transactions: use memo as To/From if available, otherwise use description
